@@ -1,32 +1,33 @@
-# CodeSensei 🥋 @Code_Sensei_bot
+# ☁️ CodeSensei | Python Mentor 🔴
 
-AI-powered daily coding trainer. Learn one concept per day, get tested twice.
+**CodeSensei** — это интеллектуальный наставник в Telegram, который помогает осваивать Python в полуавтоматическом режиме. Бот сочетает в себе четкий план обучения и мощь ИИ (Llama 3.3), упакованную в эстетику минимализма с глубокими визуальными акцентами.
 
-## How it works
+---
 
-- **10:00** — Morning lesson with explanation and theory question
-- **19:00** — Evening practical coding task
-- AI checks your answers and gives detailed feedback
-- Topics progress from simple to complex, no jumping around
+## 📜 Особенности проекта
 
-## Commands
+* **Двухэтапный цикл обучения**: Бот автоматически присылает «Свиток теории» в 10:00 и «Боевое задание» в 19:00.
+* **Умная проверка (AI)**: ИИ анализирует технические ответы и говорит «ВЕРНО» только при правильном выполнении задачи.
+* **Интерактивный прогресс**: Система из 20 уровней мастерства с визуальным трекером концентрации (🔴/☁️).
+* **Контекстная память**: Бот помнит последние этапы диалога и текущую тему обучения.
+* **Стабильность**: Код оптимизирован для работы на облачных платформах (Railway) с правильным управлением циклами событий.
 
-- `/start` — Start the bot
-- `/morning` — Get today's lesson
-- `/evening` — Get today's practical task
-- `/progress` — See your progress
+---
 
-## Stack
+## 🛠 Технологический стек
 
-- Python 3.14
-- Groq API (llama-3.3-70b)
-- python-telegram-bot
-- SQLite
-- GitHub Actions (scheduled runs)
+* **Core**: Python 3.10+
+* **API**: `python-telegram-bot`
+* **AI Engine**: `Groq API` (Llama-3.3-70b-versatile)
+* **Database**: `SQLite3` (хранение прогресса и истории)
+* **Scheduling**: `APScheduler`
 
-## Setup
+---
 
-1. Clone the repo
-2. Install: `pip install python-telegram-bot groq python-dotenv`
-3. Create `.env` with `GROQ_API_KEY` and `TELEGRAM_TOKEN`
-4. Run: `python bot.py`
+## 🚀 Быстрый старт
+
+### 1. Подготовка окружения
+Создай файл `.env` и добавь ключи:
+```env
+TELEGRAM_TOKEN=your_bot_token
+GROQ_API_KEY=your_groq_key
