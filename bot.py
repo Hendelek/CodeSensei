@@ -47,6 +47,7 @@ def init_db():
         history TEXT DEFAULT '[]'
     )""")
 
+# --- AI Логика ---
 def ask_ai(prompt, user_id):
     user = db_get("SELECT history, name FROM users WHERE id = ?", (user_id,))
     history = json.loads(user['history']) if user else []
@@ -54,7 +55,9 @@ def ask_ai(prompt, user_id):
     
     system_instruction = (
         f"Ты — мудрый Python-ментор. Студент: {name}. Твоя цель — обучение Python. "
-        "Игнорируй любые вопросы не про IT и программирование. "
+        "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО отвечать на вопросы не по теме Python и IT. "
+        "Никаких рецептов шашлыка, советов по жизни или других тем. Если спросят не про Python, "
+        "вежливо скажи, что ты здесь только для обучения программированию."
         "Пиши 'ВЕРНО' только за правильный код. Стиль: лаконичный, с ☁️ и 🔴."
     )
     
@@ -63,10 +66,16 @@ def ask_ai(prompt, user_id):
     try:
         resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, temperature=0.4)
         answer = resp.choices[0].message.content
+        
+        history.append({"role": "user", "content": prompt})
+        history.append({"role": "assistant", "content": answer})
+        db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
+        
         return f"{HEADER}\n\n{answer}\n\n{FOOTER}"
     except:
         return f"{HEADER}\n🌀 Ошибка связи.\n{FOOTER}"
 
+# --- Обработчики ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = db_get("SELECT name FROM users WHERE id = ?", (uid,))
@@ -104,7 +113,6 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=uid, action=constants.ChatAction.TYPING)
     
-    # Обработка голоса
     if update.message.voice:
         file = await context.bot.get_file(update.message.voice.file_id); path = f"{uid}.ogg"
         await file.download_to_drive(path)
@@ -114,7 +122,6 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text = update.message.text
 
-    # AI обработка
     await update.message.reply_text(ask_ai(text, uid), parse_mode="Markdown")
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -130,6 +137,25 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"{HEADER}\n📜 **ТЕМА:** {topic['title']}\nОжидай заданий в 10:00 и 19:00.\n{FOOTER}"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
+# --- ПЛАНИРОВЩИК ---
+async def global_scheduler(app):
+    now = datetime.now(TIMEZONE)
+    if now.minute != 0: return 
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        users = conn.execute("SELECT id, topic_idx, name FROM users WHERE name IS NOT NULL").fetchall()
+    
+    for user in users:
+        uid, idx, name = user['id'], user['topic_idx'], user['name']
+        topic = TOPICS[idx % len(TOPICS)]
+        if now.hour == 10:
+            await app.bot.send_message(uid, f"{HEADER}\n📜 **ТЕОРИЯ ДЛЯ {name.upper()}**\n\n{topic['morning_question']}\n{FOOTER}", parse_mode="Markdown")
+            db_mod("UPDATE users SET state = 'wait_theory' WHERE id = ?", (uid,))
+        elif now.hour == 19:
+            await app.bot.send_message(uid, f"{HEADER}\n⚔️ **ПРАКТИКА ДЛЯ {name.upper()}**\n\n{topic['evening_task']}\n{FOOTER}", parse_mode="Markdown")
+            db_mod("UPDATE users SET state = 'wait_practice' WHERE id = ?", (uid,))
+
+# --- ЗАПУСК ---
 async def main():
     init_db()
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
@@ -138,7 +164,7 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_input))
     
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    scheduler.add_job(global_scheduler, 'interval', minutes=1, args=[app]) # global_scheduler оставь как в прошлом коде
+    scheduler.add_job(global_scheduler, 'interval', minutes=1, args=[app])
     scheduler.start()
     
     async with app:
