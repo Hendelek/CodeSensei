@@ -1,0 +1,6 @@
+python-telegram-bot
+groq
+apscheduler
+pytz
+python-dotenv
+PyPDF2
