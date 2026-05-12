@@ -16,7 +16,7 @@ from groq import Groq
 try:
     from topics import TOPICS
 except ImportError:
-    TOPICS = [{"title": "Основы", "description": "Вход в мир шиноби. Изучаем базовый синтаксис.", "morning_question": "Зачем нужен print()?", "evening_task": "Выведи свое имя на экран"}]
+    TOPICS = [{"title": "Основы", "description": "Первые шаги в мастерстве. Синтаксис.", "morning_question": "Зачем нужен print()?", "evening_task": "Выведи свое имя на экран"}]
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +26,7 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 TIMEZONE = pytz.timezone("Europe/Stockholm")
 DB_PATH = "mentor_bot.db"
 
-# --- Стилизация ---
+# --- Стилизация (Визуальные константы) ---
 HEADER = "☁️🔴━━━━━━━━━━━━🔴☁️"
 FOOTER = "━━━━━━━━━━━━━━━"
 
@@ -55,9 +55,10 @@ def ask_ai(prompt, user_id):
     current_topic = TOPICS[topic_idx % len(TOPICS)]['title'] if TOPICS else "Основы"
     
     system_instruction = (
-        f"Ты — профессиональный Python-ментор в стиле Акацуки. Твой ученик: Артём. Уровень: {topic_idx + 1}/20. "
-        f"Текущая техника (тема): {current_topic}. Оформляй красиво: разделители, ☁️ и 🔴. "
-        "Если ответ верный, начни со слова ВЕРНО."
+        f"Ты — профессиональный Python-ментор. Студент: Артём. Уровень: {topic_idx + 1}/20. "
+        f"Текущая тема: {current_topic}. Твой стиль: сдержанный, мудрый, с легким налетом мистики. "
+        "НЕ говори напрямую 'ты ниндзя' или 'я из Акацуки'. Используй термины 'путь', 'мастерство', 'техника'. "
+        "Оформляй ответы красиво, используя символы ☁️ и 🔴. Если ответ верный, начни с ВЕРНО."
     )
     
     messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
@@ -72,7 +73,7 @@ def ask_ai(prompt, user_id):
         db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
         return styled_answer
     except:
-        return "🌀 Техника прервана. Попробуй позже."
+        return f"{HEADER}\n🌀 Связь прервана. Повтори попытку позже.\n{FOOTER}"
 
 # --- Обработчики кнопок ---
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -81,40 +82,41 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = db_get("SELECT topic_idx FROM users WHERE id = ?", (uid,))
     idx = user['topic_idx'] if user else 0
 
-    await query.answer() # Это «размораживает» интерфейс
+    await query.answer()
 
     if query.data == 'stats':
         lvl = idx + 1
         progress = "🔴" * (lvl % 6) + "☁️" * (5 - (lvl % 6))
         text = (
-            f"{HEADER}\n👤 **Профиль: Шиноби Артём**\n━━━━━━━━━━━━━━\n"
-            f"🆙 **Ранг:** {lvl} / 20\n✅ **Миссий:** {idx}\n📈 **Прогресс:** [{progress}]\n{FOOTER}"
+            f"{HEADER}\n👤 **Профиль мастера: Артём**\n━━━━━━━━━━━━━━\n"
+            f"🆙 **Этап:** {lvl} / 20\n✅ **Завершено:** {idx}\n📈 **Концентрация:** [{progress}]\n{FOOTER}"
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
     elif query.data == 'cur_topic':
         topic = TOPICS[idx % len(TOPICS)]
         text = (
-            f"{HEADER}\n📜 **ТЕКУЩАЯ ТЕХНИКА**\n━━━━━━━━━━━━━━\n"
-            f"🔹 **Название:** {topic['title']}\n"
-            f"📝 **Суть:** {topic.get('description', 'Изучение основ контроля чакры Python.')}\n\n"
-            f"Ожидай свиток с заданием по расписанию.\n{FOOTER}"
+            f"{HEADER}\n📜 **ТЕКУЩИЙ ЭТАП ПУТИ**\n━━━━━━━━━━━━━━\n"
+            f"🔹 **Тема:** {topic['title']}\n"
+            f"📝 **Суть:** {topic.get('description', 'Постижение основ Python.')}\n\n"
+            f"Ожидай новых указаний в положенное время.\n{FOOTER}"
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
-# --- Остальные функции ---
+# --- Обработчики команд ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not db_get("SELECT id FROM users WHERE id = ?", (uid,)):
         db_mod("INSERT INTO users (id) VALUES (?)", (uid,))
     
     welcome = (
-        f"{HEADER}\n🔴 **ДОБРО ПОЖАЛОВАТЬ В АКАЦУКИ** 🔴\n\n"
-        "Артём, твой путь начинается здесь.\n\n"
-        "📜 **Миссии:** 10:00 (Теория) | 19:00 (Практика).\n{FOOTER}"
+        f"{HEADER}\n🔴 **ТВОЙ ПУТЬ НАЧИНАЕТСЯ** 🔴\n\n"
+        "Артём, я помогу тебе отточить навыки владения кодом.\n\n"
+        "📜 **Указания:** 10:00 (Теория) | 19:00 (Практика).\n"
+        f"{FOOTER}"
     )
-    kbd = [[InlineKeyboardButton("📊 Ранг Шиноби", callback_data='stats')], 
-           [InlineKeyboardButton("📜 Текущая техника", callback_data='cur_topic')]]
+    kbd = [[InlineKeyboardButton("📊 Мой прогресс", callback_data='stats')], 
+           [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
     await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -125,10 +127,9 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=uid, action=constants.ChatAction.TYPING)
     text = update.message.text
     
-    # Логика проверки ответов
     topic = TOPICS[user['topic_idx'] % len(TOPICS)]
     if user['state'] in ['wait_theory', 'wait_practice']:
-        prompt = f"Проверь ответ на технику '{topic['title']}': {text}. Если верно, начни с ВЕРНО."
+        prompt = f"Проверь ответ по теме '{topic['title']}': {text}. Если верно, начни с ВЕРНО."
         feedback = ask_ai(prompt, uid)
         await update.message.reply_text(feedback, parse_mode="Markdown")
         if "ВЕРНО" in feedback.upper():
@@ -146,10 +147,10 @@ async def main():
     scheduler.start()
     
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CallbackQueryHandler(callback_handler)) # Единый обработчик для всех кнопок
+    app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     
-    print("Бот запущен...")
+    print("Бот в сети...")
     await app.start()
     await app.updater.start_polling()
     await asyncio.Event().wait()
