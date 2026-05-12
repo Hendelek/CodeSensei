@@ -138,24 +138,37 @@ async def main():
         logger.error("TELEGRAM_TOKEN not found!")
         return
 
+    # Создаем приложение
     app = ApplicationBuilder().token(token).build()
     
+    # Добавляем обработчики
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    
+    # Запускаем планировщик
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(global_scheduler, 'interval', minutes=1, args=[app])
     scheduler.start()
     
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    
     print("Бот запущен...")
     
-    async with app:
-        await app.initialize()
-        await app.start_polling()
+    # Инициализируем и запускаем бота
+    # Метод run_polling сам создаст нужный цикл событий
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    # Чтобы скрипт не завершался
+    try:
         while True:
             await asyncio.sleep(3600)
+    except (KeyboardInterrupt, SystemExit):
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
 
 if __name__ == "__main__":
+    # Для Windows/Railway важно правильно запустить цикл
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
