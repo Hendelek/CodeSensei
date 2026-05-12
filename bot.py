@@ -50,16 +50,14 @@ def init_db():
 
 # --- AI Логика ---
 def ask_ai(prompt, user_id):
-    user = db_get("SELECT history, topic_idx, state, name FROM users WHERE id = ?", (user_id,))
+    user = db_get("SELECT history, name FROM users WHERE id = ?", (user_id,))
     history = json.loads(user['history']) if user else []
     name = user['name'] if user and user['name'] else "Студент"
     
     system_instruction = (
-        f"Ты — мудрый и строгий Python-ментор. Твой студент: {name}. "
-        "Твоя единственная цель — обучение программированию на Python. "
-        "Если студент задает вопросы не по теме (кулинария, шашлыки, игры), вежливо откажи в ответе "
-        "и напомни, что вы здесь для изучения Python. Не давай рецептов и советов вне IT. "
-        "Пиши 'ВЕРНО' только за правильный код. Стиль: лаконичный, с использованием ☁️ и 🔴."
+        f"Ты — мудрый Python-ментор. Студент: {name}. Твоя цель — ТОЛЬКО обучение Python. "
+        "Если студент спрашивает не про IT (шашлыки, еда, лампочки), вежливо откажи и верни к обучению. "
+        "Пиши 'ВЕРНО' только за правильный код. Стиль: лаконичный, с ☁️ и 🔴."
     )
     
     messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
@@ -74,7 +72,7 @@ def ask_ai(prompt, user_id):
         db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
         return styled_answer
     except:
-        return f"{HEADER}\n🌀 Ошибка связи. Попробуй позже.\n{FOOTER}"
+        return f"{HEADER}\n🌀 Ошибка связи.\n{FOOTER}"
 
 # --- Обработчики ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -86,30 +84,38 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db_mod("INSERT INTO users (id, state) VALUES (?, ?)", (uid, 'wait_name'))
         else:
             db_mod("UPDATE users SET state = 'wait_name' WHERE id = ?", (uid,))
-        await update.message.reply_text("☁️ Добро пожаловать в CodeSensei! Как мне тебя называть?")
+        await update.message.reply_text("☁️ Добро пожаловать! Как мне тебя называть?")
         return
 
-    welcome = f"{HEADER}\n🔴 **С ВОЗВРАЩЕНИЕМ, {user['name'].upper()}** 🔴\n\nГотов продолжить обучение?\n{FOOTER}"
-    kbd = [[InlineKeyboardButton("📊 Мой прогресс", callback_data='stats')], [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
+    welcome = f"{HEADER}\n🔴 **МАСТЕР {user['name'].upper()}** 🔴\n\nПродолжим изучение Python?\n{FOOTER}"
+    kbd = [[InlineKeyboardButton("📊 Прогресс", callback_data='stats')], [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
     await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
+
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    db_mod("UPDATE users SET name = NULL, state = 'wait_name' WHERE id = ?", (uid,))
+    await update.message.reply_text("☁️ Данные сброшены. Как мне тебя теперь называть?")
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = db_get("SELECT * FROM users WHERE id = ?", (uid,))
     if not user: return
 
-    # Логика регистрации имени
+    # Умная регистрация имени
     if user['state'] == 'wait_name':
-        name = update.message.text
-        db_mod("UPDATE users SET name = ?, state = NULL WHERE id = ?", (name, uid))
-        await update.message.reply_text(f"Принято, {name}! Нажми /start, чтобы открыть меню.")
+        raw_text = update.message.text
+        name_prompt = f"Выдели только имя из фразы: '{raw_text}'. Ответь ОДНИМ словом (только имя)."
+        name_resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=[{"role": "user", "content": name_prompt}])
+        clean_name = name_resp.choices[0].message.content.strip().replace(".", "")
+        
+        db_mod("UPDATE users SET name = ?, state = NULL WHERE id = ?", (clean_name, uid))
+        await update.message.reply_text(f"Принято, {clean_name}! Нажми /start для входа в меню.")
         return
 
     await context.bot.send_chat_action(chat_id=uid, action=constants.ChatAction.TYPING)
     
     if update.message.voice:
-        file = await context.bot.get_file(update.message.voice.file_id)
-        path = f"{uid}_voice.ogg"
+        file = await context.bot.get_file(update.message.voice.file_id); path = f"{uid}.ogg"
         await file.download_to_drive(path)
         with open(path, "rb") as f:
             text = client.audio.transcriptions.create(file=(path, f.read()), model="whisper-large-v3", response_format="text")
@@ -129,21 +135,17 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(ask_ai(text, uid), parse_mode="Markdown")
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    uid = update.effective_user.id
+    query = update.callback_query; uid = update.effective_user.id
     user = db_get("SELECT * FROM users WHERE id = ?", (uid,))
-    idx = user['topic_idx'] if user else 0
-    name = user['name'] if user else "Студент"
     await query.answer()
 
     if query.data == 'stats':
-        lvl = idx + 1
-        progress = "🔴" * (lvl % 6) + "☁️" * (5 - (lvl % 6))
-        text = f"{HEADER}\n👤 **Профиль: {name}**\n━━━━━━━━━━━━━━\n🆙 **Этап:** {lvl}/20\n✅ **Завершено:** {idx}\n📈 **Прогресс:** [{progress}]\n{FOOTER}"
+        lvl = user['topic_idx'] + 1
+        text = f"{HEADER}\n👤 **Профиль: {user['name']}**\n🆙 **Этап:** {lvl}/20\n{FOOTER}"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
     elif query.data == 'cur_topic':
-        topic = TOPICS[idx % len(TOPICS)]
-        text = f"{HEADER}\n📜 **ТЕКУЩИЙ ЭТАП**\n━━━━━━━━━━━━━━\n🔹 **Тема:** {topic['title']}\n📝 **Суть:** {topic.get('description', 'Основы.')}\n\nОжидай заданий в 10:00 и 19:00.\n{FOOTER}"
+        topic = TOPICS[user['topic_idx'] % len(TOPICS)]
+        text = f"{HEADER}\n📜 **ТЕМА:** {topic['title']}\nОжидай заданий в 10:00 и 19:00.\n{FOOTER}"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
 async def global_scheduler(app):
@@ -154,16 +156,17 @@ async def global_scheduler(app):
     for uid, idx, name in users:
         topic = TOPICS[idx % len(TOPICS)]
         if now.hour == 10:
-            await app.bot.send_message(uid, f"{HEADER}\n📜 **ТЕОРИЯ ДЛЯ {name.upper()}**\n\n{topic['morning_question']}\n\n{FOOTER}", parse_mode="Markdown")
+            await app.bot.send_message(uid, f"{HEADER}\n📜 **ТЕОРИЯ ДЛЯ {name.upper()}**\n\n{topic['morning_question']}\n{FOOTER}", parse_mode="Markdown")
             db_mod("UPDATE users SET state = 'wait_theory' WHERE id = ?", (uid,))
         elif now.hour == 19:
-            await app.bot.send_message(uid, f"{HEADER}\n⚔️ **ПРАКТИКА ДЛЯ {name.upper()}**\n\n{topic['evening_task']}\n\n{FOOTER}", parse_mode="Markdown")
+            await app.bot.send_message(uid, f"{HEADER}\n⚔️ **ПРАКТИКА ДЛЯ {name.upper()}**\n\n{topic['evening_task']}\n{FOOTER}", parse_mode="Markdown")
             db_mod("UPDATE users SET state = 'wait_practice' WHERE id = ?", (uid,))
 
 async def main():
     init_db()
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("reset", reset_command))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_input))
     
@@ -172,8 +175,7 @@ async def main():
     scheduler.start()
     
     async with app:
-        await app.initialize()
-        await app.start()
+        await app.initialize(); await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
         while True: await asyncio.sleep(3600)
 
