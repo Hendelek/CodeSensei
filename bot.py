@@ -3,6 +3,7 @@ import sqlite3
 import logging
 import pytz
 import json
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -73,7 +74,7 @@ def ask_ai(prompt, user_id):
 # --- Рассылка учебных модулей ---
 async def send_module(context, user_id, mode):
     user = db_get("SELECT * FROM users WHERE id = ?", (user_id,))
-    if not TOPICS: return
+    if not TOPICS or not user: return
     
     topic = TOPICS[user['topic_idx'] % len(TOPICS)]
     
@@ -92,11 +93,13 @@ async def global_scheduler(context: ContextTypes.DEFAULT_TYPE):
         users = conn.execute("SELECT id FROM users").fetchall()
     
     for (uid,) in users:
+        # Проверка времени для Стокгольма
         if now.hour == 10 and now.minute == 0: await send_module(context, uid, "morning")
         if now.hour == 19 and now.minute == 0: await send_module(context, uid, "evening")
 
 # --- Обработка сообщений ---
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text: return
     uid = update.effective_user.id
     user = db_get("SELECT * FROM users WHERE id = ?", (uid,))
     
@@ -111,7 +114,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(uid, constants.ChatAction.TYPING)
 
     if user['state'] in ['wait_theory', 'wait_practice']:
-        # Проверка учебного задания
         prompt = f"Проверь ответ студента на {'вопрос' if user['state']=='wait_theory' else 'задачу'} по теме '{topic['title']}': {text}. Если ответ верный, начни сообщение строго со слова ВЕРНО."
         feedback = ask_ai(prompt, uid)
         await update.message.reply_text(feedback)
@@ -120,7 +122,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             new_idx = user['topic_idx'] + (1 if user['state'] == 'wait_practice' else 0)
             db_mod("UPDATE users SET topic_idx = ?, state = NULL WHERE id = ?", (new_idx, uid))
     else:
-        # Режим свободного диалога (ментор-помощник)
         response = ask_ai(text, uid)
         await update.message.reply_text(response)
 
@@ -128,11 +129,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not db_get("SELECT * FROM users WHERE id = ?", (uid,)):
         db_mod("INSERT INTO users (id) VALUES (?)", (uid,))
-    await update.message.reply_text("Система обучения запущена. Ожидайте учебные материалы в 10:00 и 19:00.")
+    await update.message.reply_text("Система обучения запущена. Ожидайте материалы в 10:00 и 19:00.")
 
-if __name__ == "__main__":
+async def main():
     init_db()
-    app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        logger.error("TELEGRAM_TOKEN not found!")
+        return
+
+    app = ApplicationBuilder().token(token).build()
     
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(global_scheduler, 'interval', minutes=1, args=[app])
@@ -142,4 +148,15 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
     print("Бот запущен...")
-    app.run_polling()
+    
+    async with app:
+        await app.initialize()
+        await app.start_polling()
+        while True:
+            await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
