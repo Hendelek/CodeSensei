@@ -4,3 +4,4 @@ apscheduler
 pytz
 python-dotenv
 PyPDF2
+pydub
