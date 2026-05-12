@@ -16,7 +16,7 @@ from groq import Groq
 try:
     from topics import TOPICS
 except ImportError:
-    TOPICS = [{"title": "Основы", "description": "Первые шаги в мастерстве. Синтаксис.", "morning_question": "Зачем нужен print()?", "evening_task": "Выведи свое имя на экран"}]
+    TOPICS = [{"title": "Основы", "description": "Синтаксис Python.", "morning_question": "Зачем нужен print()?", "evening_task": "Выведи приветствие."}]
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -42,6 +42,7 @@ def db_get(query, params=()):
 def init_db():
     db_mod("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY, 
+        name TEXT DEFAULT NULL,
         topic_idx INTEGER DEFAULT 0, 
         state TEXT DEFAULT NULL,
         history TEXT DEFAULT '[]'
@@ -49,18 +50,16 @@ def init_db():
 
 # --- AI Логика ---
 def ask_ai(prompt, user_id):
-    user = db_get("SELECT history, topic_idx, state FROM users WHERE id = ?", (user_id,))
+    user = db_get("SELECT history, topic_idx, state, name FROM users WHERE id = ?", (user_id,))
     history = json.loads(user['history']) if user else []
-    topic_idx = user['topic_idx'] if user else 0
-    state = user['state'] if user else None
-    current_topic = TOPICS[topic_idx % len(TOPICS)]['title'] if TOPICS else "Основы"
+    name = user['name'] if user and user['name'] else "Студент"
     
     system_instruction = (
-        f"Ты — мудрый Python-ментор. Студент: Артём. Этап: {topic_idx + 1}/20. Тема: {current_topic}. "
-        "Твои обязанности: присылать теорию в 10:00 и практику в 19:00. "
-        f"СЕЙЧАС ТВОЙ СТАТУС: {state if state else 'Ожидание диалога'}. "
-        "Пиши 'ВЕРНО' в начале сообщения ТОЛЬКО если пользователь дал правильный технический ответ на задачу. "
-        "Стиль: лаконичный, визуально оформлен ☁️ и 🔴. Никаких прямых упоминаний организаций."
+        f"Ты — мудрый и строгий Python-ментор. Твой студент: {name}. "
+        "Твоя единственная цель — обучение программированию на Python. "
+        "Если студент задает вопросы не по теме (кулинария, шашлыки, игры), вежливо откажи в ответе "
+        "и напомни, что вы здесь для изучения Python. Не давай рецептов и советов вне IT. "
+        "Пиши 'ВЕРНО' только за правильный код. Стиль: лаконичный, с использованием ☁️ и 🔴."
     )
     
     messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
@@ -75,34 +74,39 @@ def ask_ai(prompt, user_id):
         db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
         return styled_answer
     except:
-        return f"{HEADER}\n🌀 Связь прервана. Повтори попытку позже.\n{FOOTER}"
+        return f"{HEADER}\n🌀 Ошибка связи. Попробуй позже.\n{FOOTER}"
 
 # --- Обработчики ---
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    user = db_get("SELECT topic_idx FROM users WHERE id = ?", (uid,))
-    idx = user['topic_idx'] if user else 0
-    await query.answer()
+    user = db_get("SELECT name FROM users WHERE id = ?", (uid,))
+    
+    if not user or user['name'] is None:
+        if not user:
+            db_mod("INSERT INTO users (id, state) VALUES (?, ?)", (uid, 'wait_name'))
+        else:
+            db_mod("UPDATE users SET state = 'wait_name' WHERE id = ?", (uid,))
+        await update.message.reply_text("☁️ Добро пожаловать в CodeSensei! Как мне тебя называть?")
+        return
 
-    if query.data == 'stats':
-        lvl = idx + 1
-        progress = "🔴" * (lvl % 6) + "☁️" * (5 - (lvl % 6))
-        text = f"{HEADER}\n👤 **Профиль: Артём**\n━━━━━━━━━━━━━━\n🆙 **Этап:** {lvl}/20\n✅ **Завершено:** {idx}\n📈 **Прогресс:** [{progress}]\n{FOOTER}"
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
-    elif query.data == 'cur_topic':
-        topic = TOPICS[idx % len(TOPICS)]
-        text = f"{HEADER}\n📜 **ТЕКУЩИЙ ЭТАП**\n━━━━━━━━━━━━━━\n🔹 **Тема:** {topic['title']}\n📝 **Суть:** {topic.get('description', 'Основы Python.')}\n\nОжидай новых указаний в 10:00 и 19:00.\n{FOOTER}"
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
+    welcome = f"{HEADER}\n🔴 **С ВОЗВРАЩЕНИЕМ, {user['name'].upper()}** 🔴\n\nГотов продолжить обучение?\n{FOOTER}"
+    kbd = [[InlineKeyboardButton("📊 Мой прогресс", callback_data='stats')], [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
+    await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = db_get("SELECT * FROM users WHERE id = ?", (uid,))
     if not user: return
 
+    # Логика регистрации имени
+    if user['state'] == 'wait_name':
+        name = update.message.text
+        db_mod("UPDATE users SET name = ?, state = NULL WHERE id = ?", (name, uid))
+        await update.message.reply_text(f"Принято, {name}! Нажми /start, чтобы открыть меню.")
+        return
+
     await context.bot.send_chat_action(chat_id=uid, action=constants.ChatAction.TYPING)
     
-    # Обработка голосового сообщения
     if update.message.voice:
         file = await context.bot.get_file(update.message.voice.file_id)
         path = f"{uid}_voice.ogg"
@@ -124,28 +128,36 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(ask_ai(text, uid), parse_mode="Markdown")
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
     uid = update.effective_user.id
-    if not db_get("SELECT id FROM users WHERE id = ?", (uid,)):
-        db_mod("INSERT INTO users (id) VALUES (?)", (uid,))
-    
-    welcome = f"{HEADER}\n🔴 **ТВОЙ ПУТЬ НАЧИНАЕТСЯ** 🔴\n\nАртём, я помогу тебе отточить навыки владения кодом.\n\n📜 **Указания:** 10:00 (Теория) | 19:00 (Практика).\n{FOOTER}"
-    kbd = [[InlineKeyboardButton("📊 Мой прогресс", callback_data='stats')], [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
-    await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
+    user = db_get("SELECT * FROM users WHERE id = ?", (uid,))
+    idx = user['topic_idx'] if user else 0
+    name = user['name'] if user else "Студент"
+    await query.answer()
 
-# --- Планировщик и Запуск ---
+    if query.data == 'stats':
+        lvl = idx + 1
+        progress = "🔴" * (lvl % 6) + "☁️" * (5 - (lvl % 6))
+        text = f"{HEADER}\n👤 **Профиль: {name}**\n━━━━━━━━━━━━━━\n🆙 **Этап:** {lvl}/20\n✅ **Завершено:** {idx}\n📈 **Прогресс:** [{progress}]\n{FOOTER}"
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
+    elif query.data == 'cur_topic':
+        topic = TOPICS[idx % len(TOPICS)]
+        text = f"{HEADER}\n📜 **ТЕКУЩИЙ ЭТАП**\n━━━━━━━━━━━━━━\n🔹 **Тема:** {topic['title']}\n📝 **Суть:** {topic.get('description', 'Основы.')}\n\nОжидай заданий в 10:00 и 19:00.\n{FOOTER}"
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
+
 async def global_scheduler(app):
     now = datetime.now(TIMEZONE)
     if now.minute != 0: return 
     with sqlite3.connect(DB_PATH) as conn:
-        users = conn.execute("SELECT id, topic_idx FROM users").fetchall()
-    for uid, idx in users:
+        users = conn.execute("SELECT id, topic_idx, name FROM users WHERE name IS NOT NULL").fetchall()
+    for uid, idx, name in users:
         topic = TOPICS[idx % len(TOPICS)]
         if now.hour == 10:
-            await app.bot.send_message(uid, f"{HEADER}\n📜 **СВИТОК ТЕОРИИ: {topic['title']}**\n\n{topic['morning_question']}\n\n{FOOTER}", parse_mode="Markdown")
+            await app.bot.send_message(uid, f"{HEADER}\n📜 **ТЕОРИЯ ДЛЯ {name.upper()}**\n\n{topic['morning_question']}\n\n{FOOTER}", parse_mode="Markdown")
             db_mod("UPDATE users SET state = 'wait_theory' WHERE id = ?", (uid,))
         elif now.hour == 19:
-            await app.bot.send_message(uid, f"{HEADER}\n⚔️ **ПРАКТИЧЕСКИЙ БОЙ: {topic['title']}**\n\n{topic['evening_task']}\n\n{FOOTER}", parse_mode="Markdown")
+            await app.bot.send_message(uid, f"{HEADER}\n⚔️ **ПРАКТИКА ДЛЯ {name.upper()}**\n\n{topic['evening_task']}\n\n{FOOTER}", parse_mode="Markdown")
             db_mod("UPDATE users SET state = 'wait_practice' WHERE id = ?", (uid,))
 
 async def main():
