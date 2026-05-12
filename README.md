@@ -1,32 +1,33 @@
-# ☁️ CodeSensei: AI-Driven Mentorship System 🔴
+# ☁️ CodeSensei: AI-Driven Python Mentorship System 🔴
 
-Профессиональный инструмент для автоматизации обучения Python, построенный на современной асинхронной архитектуре с интеграцией LLM.
+A production-ready Telegram bot designed to automate the Python learning path using a modern asynchronous architecture and LLM integration.
 
-🔗 **Production:** [@Code_Sensei_bot](https://t.me/Code_Sensei_bot)
-
----
-
-### 🛠 Technical Highlights (Stack & Architecture)
-
-* **LLM Orchestration:** Использование **Llama-3.3-70B** через Groq API для контекстуального анализа ответов и генерации фидбека в реальном времени.
-* **Speech-to-Text (STT):** Интеграция **Whisper-large-v3** для транскрибации голосовых сообщений, что обеспечивает мультимодальное взаимодействие с пользователем.
-* **Asynchronous Core:** Полностью асинхронная реализация на `python-telegram-bot`, предотвращающая блокировку Event Loop при тяжелых запросах к API.
-* **State Management:** Реализована машина состояний (FSM) на базе **SQLite3** для отслеживания прогресса пользователя, этапов обучения и хранения истории диалогов.
-* **Job Scheduling:** Автоматизация рассылок учебных материалов реализована через **APScheduler** с привязкой к часовым поясам (`pytz`).
-* **Cloud Native:** Система оптимизирована под CI/CD деплой на **Railway**, настроена корректная обработка сигналов завершения и очистка очередей обновлений (`drop_pending_updates`).
+🔗 **Live Demo:** [@Code_Sensei_bot](https://t.me/Code_Sensei_bot)
 
 ---
 
-### 🧩 Key Features (Backend Logic)
+### 🛠 Technical Stack & Architecture
 
-1.  **Contextual Memory:** Система хранит последние 6 реплик диалога, передавая их в LLM для сохранения контекста обучения.
-2.  **Smart Validation:** Алгоритм проверки ответов использует системные промпты для разделения "болтовни" и "технического решения", выдавая флаг `ВЕРНО` только при валидации кода.
-3.  **Resilience:** Обработка конфликтов сессий и автоматический рестарт при сбоях в сетевом соединении с API.
+* **LLM Orchestration:** Powered by **Llama-3.3-70B** (via Groq API) for real-time contextual feedback and code validation.
+* **Multimodal Interaction:** Integrated **Whisper-large-v3** for high-accuracy Speech-to-Text (STT) processing, allowing users to interact via voice.
+* **Asynchronous Core:** Built on `python-telegram-bot` with a fully non-blocking architecture to ensure high responsiveness during heavy API I/O operations.
+* **Persistence & State Management:** Implemented an FSM (Finite State Machine) using **SQLite3** to track user progress, learning stages, and conversation history.
+* **Automated Job Scheduling:** Managed by **APScheduler** with timezone-aware (`pytz`) triggers for daily content delivery.
+* **Cloud Infrastructure:** Optimized for **Railway** deployment with robust signal handling and update queue management (`drop_pending_updates`).
 
 ---
 
-### ⚙️ Environment
+### 🧩 Engineering Highlights
+
+1.  **Contextual Memory Buffer:** Implements a sliding window history (storing the last 6 interactions) to maintain pedagogical context for the LLM.
+2.  **Zero-Shot Validation Logic:** Utilizes advanced prompt engineering to distinguish between casual dialogue and technical solutions, triggering a "VERNO" (Correct) flag only upon successful logic validation.
+3.  **Resilience & Error Handling:** Built-in conflict resolution for Telegram bot sessions and automated recovery protocols for API rate limits or network disruptions.
+4.  **Modular Syllabus:** Decoupled educational content (`topics.py`) from the core logic, allowing for easy expansion of the curriculum.
+
+---
+
+### ⚙️ Development Environment
 ```env
-TELEGRAM_TOKEN=...
-GROQ_API_KEY=...
+TELEGRAM_TOKEN=your_token_here
+GROQ_API_KEY=your_key_here
 PYTHON_VERSION=3.10
