@@ -16,7 +16,7 @@ from groq import Groq
 try:
     from topics import TOPICS
 except ImportError:
-    TOPICS = []
+    TOPICS = [{"title": "Основы", "description": "Начни изучение!", "morning_question": "Что такое print()?", "evening_task": "Напиши Hello World"}]
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -44,12 +44,12 @@ def init_db():
         history TEXT DEFAULT '[]'
     )""")
 
-# --- AI Логика (Текст + Голос) ---
+# --- AI Логика ---
 def ask_ai(prompt, user_id):
     user = db_get("SELECT history FROM users WHERE id = ?", (user_id,))
     history = json.loads(user['history']) if user else []
     
-    system_instruction = "Ты — Python-ментор. Отвечай кратко и по делу. Если ответ верный, начни со слова ВЕРНО."
+    system_instruction = "Ты — Python-ментор. Отвечай кратко и по делу. Если ответ студента верный, начни сообщение строго со слова ВЕРНО."
     messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
     
     try:
@@ -59,22 +59,15 @@ def ask_ai(prompt, user_id):
         history.append({"role": "assistant", "content": answer})
         db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
         return answer
-    except: return "Ошибка AI. Попробуй позже."
+    except: return "Ошибка ИИ. Попробуй позже."
 
 async def transcribe_voice(voice_file_path):
     try:
         with open(voice_file_path, "rb") as file:
-            transcription = client.audio.transcriptions.create(
-                file=(voice_file_path, file.read()),
-                model="whisper-large-v3",
-                response_format="text"
-            )
-        return transcription
-    except Exception as e:
-        logger.error(f"Voice error: {e}")
-        return None
+            return client.audio.transcriptions.create(file=(voice_file_path, file.read()), model="whisper-large-v3", response_format="text")
+    except: return None
 
-# --- Команды и Интерфейс ---
+# --- Обработчики ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not db_get("SELECT id FROM users WHERE id = ?", (uid,)):
@@ -82,9 +75,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     welcome = (
         "🤖 **CodeSensei приветствует тебя!**\n\n"
-        "Я помогу тебе дойти с 1 до 20 уровня в Python.\n"
+        "Я помогу тебе дойти до 20 уровня в Python.\n"
         "🔹 10:00 — Теория\n🔹 19:00 — Практика\n"
-        "🔹 Отправляй текст или **голос** — я всё пойму."
+        "🔹 Понимаю текст и голос."
     )
     kbd = [[InlineKeyboardButton("📊 Моя статистика", callback_data='stats')]]
     await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
@@ -94,44 +87,42 @@ async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = db_get("SELECT topic_idx FROM users WHERE id = ?", (uid,))
     
-    lvl = user['topic_idx'] + 1
+    lvl = (user['topic_idx'] if user else 0) + 1
     progress = "🔥" * (lvl if lvl <= 10 else 10)
     
     text = (
-        f"👤 **Профиль кодера**\n"
-        f"━━━━━━━━━━━━━━\n"
+        f"👤 **Профиль кодера**\n━━━━━━━━━━━━━━\n"
         f"🆙 **Уровень:** {lvl} / 20\n"
         f"📈 **Прогресс:** {progress}\n"
-        f"✅ **Тем пройдено:** {user['topic_idx']}"
+        f"✅ **Тем пройдено:** {lvl - 1}"
     )
+    
     if query:
         await query.answer()
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
     else:
         await update.message.reply_text(text, parse_mode="Markdown")
 
-# --- Обработка сообщений ---
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = db_get("SELECT * FROM users WHERE id = ?", (uid,))
     if not user: return
 
-    # Если пришел голос
+    # Эффект "печатает"
+    await context.bot.send_chat_action(chat_id=uid, action=constants.ChatAction.TYPING)
+
     if update.message.voice:
-        await context.bot.send_chat_action(uid, constants.ChatAction.TYPING)
         file = await context.bot.get_file(update.message.voice.file_id)
         path = f"{uid}_voice.ogg"
         await file.download_to_drive(path)
         text = await transcribe_voice(path)
         os.remove(path)
         if not text:
-            await update.message.reply_text("Не удалось распознать голос.")
+            await update.message.reply_text("Не распознал голос.")
             return
-        await update.message.reply_text(f"🎤 _Ты сказал:_ {text}", parse_mode="Markdown")
     else:
         text = update.message.text
 
-    # Логика обучения
     topic = TOPICS[user['topic_idx'] % len(TOPICS)]
     if user['state'] in ['wait_theory', 'wait_practice']:
         prompt = f"Проверь ответ на тему '{topic['title']}': {text}. Если верно, начни с ВЕРНО."
@@ -143,13 +134,32 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(ask_ai(text, uid))
 
+# --- Планировщик ---
+async def global_scheduler(app):
+    now = datetime.now(TIMEZONE)
+    if now.minute != 0: return # Проверка только в начале часа
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        users = conn.execute("SELECT id, topic_idx FROM users").fetchall()
+    
+    for uid, idx in users:
+        topic = TOPICS[idx % len(TOPICS)]
+        if now.hour == 10:
+            await app.bot.send_message(uid, f"📚 **Теория:** {topic['title']}\n\n{topic['morning_question']}")
+            db_mod("UPDATE users SET state = 'wait_theory' WHERE id = ?", (uid,))
+        elif now.hour == 19:
+            await app.bot.send_message(uid, f"💻 **Практика:** {topic['evening_task']}")
+            db_mod("UPDATE users SET state = 'wait_practice' WHERE id = ?", (uid,))
+
 # --- Запуск ---
 async def main():
     init_db()
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
     
+    await app.initialize()
+    
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    # Здесь можно добавить global_scheduler из прошлого кода для рассылки
+    scheduler.add_job(global_scheduler, 'interval', minutes=1, args=[app])
     scheduler.start()
     
     app.add_handler(CommandHandler("start", start_command))
@@ -158,7 +168,6 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_input))
     
     print("Бот запущен...")
-    await app.initialize()
     await app.start()
     await app.updater.start_polling()
     await asyncio.Event().wait()
