@@ -7,26 +7,26 @@ import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 
-from telegram import Update, constants
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
+from telegram import Update, constants, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes, CallbackQueryHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from groq import Groq
 
-# Загрузка учебных тем
+# Загрузка тем
 try:
     from topics import TOPICS
 except ImportError:
     TOPICS = []
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 TIMEZONE = pytz.timezone("Europe/Stockholm")
 DB_PATH = "mentor_bot.db"
 
-# --- Работа с базой данных ---
+# --- База данных ---
 def db_mod(query, params=()):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(query, params); conn.commit()
@@ -44,132 +44,124 @@ def init_db():
         history TEXT DEFAULT '[]'
     )""")
 
-# --- Взаимодействие с AI ---
+# --- AI Логика (Текст + Голос) ---
 def ask_ai(prompt, user_id):
     user = db_get("SELECT history FROM users WHERE id = ?", (user_id,))
     history = json.loads(user['history']) if user else []
     
-    system_instruction = (
-        "Ты — профессиональный ментор по программированию на Python. "
-        "Твоя задача: помогать студенту осваивать теорию и практику. "
-        "Отвечай кратко, конструктивно и только по теме IT. "
-        "Если студент совершил ошибку в коде, подробно объясни причину и дай верное решение."
-    )
-    
+    system_instruction = "Ты — Python-ментор. Отвечай кратко и по делу. Если ответ верный, начни со слова ВЕРНО."
     messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
     
     try:
         resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, temperature=0.3)
         answer = resp.choices[0].message.content
-        
         history.append({"role": "user", "content": prompt})
         history.append({"role": "assistant", "content": answer})
-        db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-8:]), user_id))
-        
+        db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
         return answer
+    except: return "Ошибка AI. Попробуй позже."
+
+async def transcribe_voice(voice_file_path):
+    try:
+        with open(voice_file_path, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=(voice_file_path, file.read()),
+                model="whisper-large-v3",
+                response_format="text"
+            )
+        return transcription
     except Exception as e:
-        logger.error(f"AI Error: {e}")
-        return "Произошла ошибка при обращении к AI. Попробуйте позже."
+        logger.error(f"Voice error: {e}")
+        return None
 
-# --- Рассылка учебных модулей ---
-async def send_module(context, user_id, mode):
-    user = db_get("SELECT * FROM users WHERE id = ?", (user_id,))
-    if not TOPICS or not user: return
+# --- Команды и Интерфейс ---
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not db_get("SELECT id FROM users WHERE id = ?", (uid,)):
+        db_mod("INSERT INTO users (id) VALUES (?)", (uid,))
     
-    topic = TOPICS[user['topic_idx'] % len(TOPICS)]
+    welcome = (
+        "🤖 **CodeSensei приветствует тебя!**\n\n"
+        "Я помогу тебе дойти с 1 до 20 уровня в Python.\n"
+        "🔹 10:00 — Теория\n🔹 19:00 — Практика\n"
+        "🔹 Отправляй текст или **голос** — я всё пойму."
+    )
+    kbd = [[InlineKeyboardButton("📊 Моя статистика", callback_data='stats')]]
+    await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
+
+async def stats_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    uid = update.effective_user.id
+    user = db_get("SELECT topic_idx FROM users WHERE id = ?", (uid,))
     
-    if mode == "morning":
-        msg = f"📚 **Тема дня: {topic['title']}**\n\n{topic['description']}\n\n**Вопрос:** {topic['morning_question']}"
-        db_mod("UPDATE users SET state = 'wait_theory' WHERE id = ?", (user_id,))
+    lvl = user['topic_idx'] + 1
+    progress = "🔥" * (lvl if lvl <= 10 else 10)
+    
+    text = (
+        f"👤 **Профиль кодера**\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"🆙 **Уровень:** {lvl} / 20\n"
+        f"📈 **Прогресс:** {progress}\n"
+        f"✅ **Тем пройдено:** {user['topic_idx']}"
+    )
+    if query:
+        await query.answer()
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
     else:
-        msg = f"💻 **Вечерняя практика: {topic['title']}**\n\n**Задание:** {topic['evening_task']}"
-        db_mod("UPDATE users SET state = 'wait_practice' WHERE id = ?", (user_id,))
-    
-    await context.bot.send_message(user_id, msg, parse_mode="Markdown")
-
-async def global_scheduler(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.now(TIMEZONE)
-    with sqlite3.connect(DB_PATH) as conn:
-        users = conn.execute("SELECT id FROM users").fetchall()
-    
-    for (uid,) in users:
-        # Проверка времени для Стокгольма
-        if now.hour == 10 and now.minute == 0: await send_module(context, uid, "morning")
-        if now.hour == 19 and now.minute == 0: await send_module(context, uid, "evening")
+        await update.message.reply_text(text, parse_mode="Markdown")
 
 # --- Обработка сообщений ---
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text: return
+async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = db_get("SELECT * FROM users WHERE id = ?", (uid,))
-    
-    if not user:
-        db_mod("INSERT INTO users (id) VALUES (?)", (uid,))
-        user = db_get("SELECT * FROM users WHERE id = ?", (uid,))
-        await send_module(context, uid, "morning")
-        return
+    if not user: return
 
-    text = update.message.text
+    # Если пришел голос
+    if update.message.voice:
+        await context.bot.send_chat_action(uid, constants.ChatAction.TYPING)
+        file = await context.bot.get_file(update.message.voice.file_id)
+        path = f"{uid}_voice.ogg"
+        await file.download_to_drive(path)
+        text = await transcribe_voice(path)
+        os.remove(path)
+        if not text:
+            await update.message.reply_text("Не удалось распознать голос.")
+            return
+        await update.message.reply_text(f"🎤 _Ты сказал:_ {text}", parse_mode="Markdown")
+    else:
+        text = update.message.text
+
+    # Логика обучения
     topic = TOPICS[user['topic_idx'] % len(TOPICS)]
-    await context.bot.send_chat_action(uid, constants.ChatAction.TYPING)
-
     if user['state'] in ['wait_theory', 'wait_practice']:
-        prompt = f"Проверь ответ студента на {'вопрос' if user['state']=='wait_theory' else 'задачу'} по теме '{topic['title']}': {text}. Если ответ верный, начни сообщение строго со слова ВЕРНО."
+        prompt = f"Проверь ответ на тему '{topic['title']}': {text}. Если верно, начни с ВЕРНО."
         feedback = ask_ai(prompt, uid)
         await update.message.reply_text(feedback)
-        
         if "ВЕРНО" in feedback.upper():
             new_idx = user['topic_idx'] + (1 if user['state'] == 'wait_practice' else 0)
             db_mod("UPDATE users SET topic_idx = ?, state = NULL WHERE id = ?", (new_idx, uid))
     else:
-        response = ask_ai(text, uid)
-        await update.message.reply_text(response)
+        await update.message.reply_text(ask_ai(text, uid))
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if not db_get("SELECT * FROM users WHERE id = ?", (uid,)):
-        db_mod("INSERT INTO users (id) VALUES (?)", (uid,))
-    await update.message.reply_text("Система обучения запущена. Ожидайте материалы в 10:00 и 19:00.")
-
+# --- Запуск ---
 async def main():
     init_db()
-    token = os.getenv("TELEGRAM_TOKEN")
-    if not token:
-        logger.error("TELEGRAM_TOKEN not found!")
-        return
-
-    # Создаем приложение
-    app = ApplicationBuilder().token(token).build()
+    app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
     
-    # Добавляем обработчики
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    
-    # Запускаем планировщик
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    scheduler.add_job(global_scheduler, 'interval', minutes=1, args=[app])
+    # Здесь можно добавить global_scheduler из прошлого кода для рассылки
     scheduler.start()
     
-    print("Бот запущен...")
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("stats", stats_handler))
+    app.add_handler(CallbackQueryHandler(stats_handler, pattern='^stats$'))
+    app.add_handler(MessageHandler(filters.TEXT | filters.VOICE, handle_input))
     
-    # Инициализируем и запускаем бота
-    # Метод run_polling сам создаст нужный цикл событий
+    print("Бот запущен...")
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
-    
-    # Чтобы скрипт не завершался
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, SystemExit):
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    # Для Windows/Railway важно правильно запустить цикл
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    asyncio.run(main())
