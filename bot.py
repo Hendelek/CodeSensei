@@ -26,7 +26,7 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 TIMEZONE = pytz.timezone("Europe/Stockholm")
 DB_PATH = "mentor_bot.db"
 
-# --- Стилизация (Визуальные константы) ---
+# --- Стилизация ---
 HEADER = "☁️🔴━━━━━━━━━━━━🔴☁️"
 FOOTER = "━━━━━━━━━━━━━━━"
 
@@ -49,22 +49,26 @@ def init_db():
 
 # --- AI Логика ---
 def ask_ai(prompt, user_id):
-    user = db_get("SELECT history, topic_idx FROM users WHERE id = ?", (user_id,))
+    user = db_get("SELECT history, topic_idx, state FROM users WHERE id = ?", (user_id,))
     history = json.loads(user['history']) if user else []
     topic_idx = user['topic_idx'] if user else 0
+    state = user['state'] if user else None
     current_topic = TOPICS[topic_idx % len(TOPICS)]['title'] if TOPICS else "Основы"
     
     system_instruction = (
-        f"Ты — профессиональный Python-ментор. Студент: Артём. Уровень: {topic_idx + 1}/20. "
-        f"Текущая тема: {current_topic}. Твой стиль: сдержанный, мудрый, с легким налетом мистики. "
-        "НЕ говори напрямую 'ты ниндзя' или 'я из Акацуки'. Используй термины 'путь', 'мастерство', 'техника'. "
-        "Оформляй ответы красиво, используя символы ☁️ и 🔴. Если ответ верный, начни с ВЕРНО."
+        f"Ты — мудрый Python-ментор. Студент: Артём. Этап: {topic_idx + 1}/20. Тема: {current_topic}. "
+        "Твои обязанности: присылать теорию в 10:00 и практику в 19:00. "
+        "Если Артём спрашивает про задания или время — подтверди это расписание. "
+        f"СЕЙЧАС ТВОЙ СТАТУС: {state if state else 'Ожидание диалога'}. "
+        "ВАЖНО: Пиши 'ВЕРНО' в начале сообщения ТОЛЬКО если пользователь дал правильный технический ответ "
+        "на задачу. В обычном общении не используй это слово. "
+        "Стиль: лаконичный, визуально оформлен ☁️ и 🔴. Никаких прямых упоминаний Акацуки."
     )
     
     messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
     
     try:
-        resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, temperature=0.5)
+        resp = client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, temperature=0.4)
         answer = resp.choices[0].message.content
         styled_answer = f"{HEADER}\n\n{answer}\n\n{FOOTER}"
         
@@ -73,7 +77,7 @@ def ask_ai(prompt, user_id):
         db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
         return styled_answer
     except:
-        return f"{HEADER}\n🌀 Связь прервана. Повтори попытку позже.\n{FOOTER}"
+        return f"{HEADER}\n🌀 Техника прервана. Попробуй позже.\n{FOOTER}"
 
 # --- Обработчики кнопок ---
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -99,11 +103,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{HEADER}\n📜 **ТЕКУЩИЙ ЭТАП ПУТИ**\n━━━━━━━━━━━━━━\n"
             f"🔹 **Тема:** {topic['title']}\n"
             f"📝 **Суть:** {topic.get('description', 'Постижение основ Python.')}\n\n"
-            f"Ожидай новых указаний в положенное время.\n{FOOTER}"
+            f"Ожидай новых указаний в 10:00 и 19:00.\n{FOOTER}"
         )
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
-# --- Обработчики команд ---
+# --- Обработчики команд и сообщений ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not db_get("SELECT id FROM users WHERE id = ?", (uid,)):
@@ -138,22 +142,47 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(ask_ai(text, uid), parse_mode="Markdown")
 
+# --- Планировщик ---
+async def global_scheduler(app):
+    now = datetime.now(TIMEZONE)
+    if now.minute != 0: return 
+    with sqlite3.connect(DB_PATH) as conn:
+        users = conn.execute("SELECT id, topic_idx FROM users").fetchall()
+    
+    for uid, idx in users:
+        topic = TOPICS[idx % len(TOPICS)]
+        if now.hour == 10:
+            msg = f"{HEADER}\n📜 **СВИТОК ТЕОРИИ: {topic['title']}**\n\n{topic['morning_question']}\n\n{FOOTER}"
+            await app.bot.send_message(uid, msg, parse_mode="Markdown")
+            db_mod("UPDATE users SET state = 'wait_theory' WHERE id = ?", (uid,))
+        elif now.hour == 19:
+            msg = f"{HEADER}\n⚔️ **ПРАКТИЧЕСКИЙ БОЙ: {topic['title']}**\n\n{topic['evening_task']}\n\n{FOOTER}"
+            await app.bot.send_message(uid, msg, parse_mode="Markdown")
+            db_mod("UPDATE users SET state = 'wait_practice' WHERE id = ?", (uid,))
+
+# --- Основной цикл ---
 async def main():
     init_db()
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
-    await app.initialize()
-    
-    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    scheduler.start()
     
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     
-    print("Бот в сети...")
-    await app.start()
-    await app.updater.start_polling()
-    await asyncio.Event().wait()
+    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+    scheduler.add_job(global_scheduler, 'interval', minutes=1, args=[app])
+    scheduler.start()
+    
+    print("Бот запущен...")
+    
+    async with app:
+        await app.start()
+        await app.updater.start_polling()
+        while True:
+            await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
