@@ -14,31 +14,27 @@ def init_db():
                 state TEXT
             )
         """)
-        # Добавить колонку если её нет
-        try:
-            conn.execute("ALTER TABLE progress ADD COLUMN state TEXT")
-        except:
-            pass
 
 def get_user(user_id):
     with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM progress WHERE user_id = ?", (user_id,)).fetchone()
         if not row:
             conn.execute("INSERT INTO progress (user_id) VALUES (?)", (user_id,))
-            return {"user_id": user_id, "current_topic_index": 0, "morning_done": 0, "evening_done": 0, "last_date": None}
-        return {"user_id": row[0], "current_topic_index": row[1], "morning_done": row[2], "evening_done": row[3], "last_date": row[4]}
+            conn.commit()
+            return {"user_id": user_id, "current_topic_index": 0, "morning_done": 0, "evening_done": 0, "state": None}
+        return dict(row)
 
 def update_user(user_id, **kwargs):
     fields = ", ".join([f"{k} = ?" for k in kwargs])
     values = list(kwargs.values()) + [user_id]
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(f"UPDATE progress SET {fields} WHERE user_id = ?", values)
-        
-def get_state(user_id):
-    with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute("SELECT state FROM progress WHERE user_id = ?", (user_id,)).fetchone()
-        return row[0] if row and row[0] else None
+        conn.commit()
 
 def set_state(user_id, state):
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("UPDATE progress SET state = ? WHERE user_id = ?", (state, user_id))
+    update_user(user_id, state=state)
+
+def get_state(user_id):
+    user = get_user(user_id)
+    return user.get("state")
