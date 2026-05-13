@@ -18,20 +18,22 @@ from groq import AsyncGroq
 try:
     from topics import TOPICS
 except ImportError:
-    TOPICS = [{"title": "Основы", "description": "База Python.", "morning_question": "Зачем нужен print()?", "evening_task": "Выведи приветствие."}]
+    TOPICS = [{"title": "Основы", "description": "База Python.", "morning_question": "Зачем?", "evening_task": "Напиши код."}]
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Настройки из Railway Variables
 client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 TIMEZONE = pytz.timezone("Europe/Stockholm")
 DB_PATH = "mentor_bot.db"
 
 HEADER = "☁️🔴━━━━━━━━━━━━🔴☁️"
 FOOTER = "━━━━━━━━━━━━━━━"
 
-# --- Асинхронная БД ---
+# --- Работа с БД ---
 async def db_mod(query, params=()):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(query, params)
@@ -44,162 +46,127 @@ async def db_get(query, params=()):
             return await cursor.fetchone()
 
 async def init_db():
-    await db_mod("""CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY, 
-        name TEXT DEFAULT NULL,
-        topic_idx INTEGER DEFAULT 0, 
-        state TEXT DEFAULT NULL,
-        history TEXT DEFAULT '[]'
-    )""")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY, 
+            name TEXT DEFAULT NULL,
+            topic_idx INTEGER DEFAULT 0, 
+            state TEXT DEFAULT NULL,
+            history TEXT DEFAULT '[]',
+            last_seen TEXT DEFAULT NULL
+        )""")
+        try: await db.execute("ALTER TABLE users ADD COLUMN last_seen TEXT")
+        except: pass
+        await db.commit()
 
-# --- AI Логика ---
+# --- AI Ментор ---
 async def ask_ai(prompt, user_id, is_test=False):
     user = await db_get("SELECT history, name FROM users WHERE id = ?", (user_id,))
-    try:
-        history = json.loads(user['history']) if user and user['history'] else []
-    except:
-        history = []
-    
-    name = user['name'] if user and user['name'] else "Студент"
+    history = json.loads(user['history']) if user and user['history'] else []
+    name = user['name'] or "Студент"
     
     if is_test:
-        system_instruction = (
-            f"Ты проводишь вступительный тест для студента {name}. Задавай по одному техническому вопросу по Python. "
-            "После 3-4 ответов ты должен оценить уровень и прислать строгое сообщение: 'RESULT_INDEX: n', "
-            f"где n — число от 0 до {len(TOPICS)-1}. Выбирай индекс темы на основе знаний."
-        )
+        sys_msg = (f"Ты тестируешь {name}. Задай 1 технический вопрос по Python. "
+                   f"После 3 ответов напиши строго: 'RESULT_INDEX: n', где n (0-{len(TOPICS)-1}) — индекс темы.")
     else:
-        system_instruction = (
-            f"Ты — строгий Python-ментор. Студент: {name}. Цель — обучение Python. "
-            "Игнорируй оффтоп. Стиль: лаконичный, с ☁️ и 🔴."
-        )
-    
-    messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
+        sys_msg = f"Ты — Python-ментор для {name}. Пиши кратко, используй ☁️ и 🔴."
+
+    messages = [{"role": "system", "content": sys_msg}] + history + [{"role": "user", "content": prompt}]
     
     try:
         resp = await client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, temperature=0.3)
-        answer = resp.choices[0].message.content
+        ans = resp.choices[0].message.content
         history.append({"role": "user", "content": prompt})
-        history.append({"role": "assistant", "content": answer})
+        history.append({"role": "assistant", "content": ans})
         await db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
-        return answer if is_test else f"{HEADER}\n\n{answer}\n\n{FOOTER}"
-    except Exception as e:
-        logger.error(f"AI Error: {e}")
-        return "🌀 Ошибка связи."
+        return ans if is_test else f"{HEADER}\n\n{ans}\n\n{FOOTER}"
+    except: return "🌀 Ошибка AI."
 
-# --- Обработчики команд ---
+# --- Команды ---
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    async with aiosqlite.connect(DB_PATH) as db:
+        total = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
+        act_24 = (await (await db.execute("SELECT COUNT(*) FROM users WHERE last_seen > datetime('now', '-1 day')")).fetchone())[0]
+        dist = await (await db.execute("SELECT topic_idx, COUNT(*) FROM users GROUP BY topic_idx")).fetchall()
+    
+    dist_txt = "\n".join([f"📚 Тема {t[0]}: {t[1]} чел." for t in dist])
+    await update.message.reply_text(f"{HEADER}\n📊 **АДМИНКА**\n\nВсего: {total}\nАктивны (24ч): {act_24}\n\n{dist_txt}\n{FOOTER}", parse_mode="Markdown")
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user = await db_get("SELECT name, state FROM users WHERE id = ?", (uid,))
     
-    if not user or user['name'] is None:
-        if not user:
-            await db_mod("INSERT INTO users (id, state) VALUES (?, ?)", (uid, 'wait_name'))
-        else:
-            await db_mod("UPDATE users SET state = 'wait_name' WHERE id = ?", (uid,))
-        await update.message.reply_text("☁️ Добро пожаловать! Как мне тебя называть?")
+    if not user or not user['name']:
+        if not user: await db_mod("INSERT INTO users (id, state) VALUES (?, ?)", (uid, 'wait_name'))
+        else: await db_mod("UPDATE users SET state = 'wait_name' WHERE id = ?", (uid,))
+        await update.message.reply_text("☁️ Привет! Как тебя зовут?")
         return
 
     if user['state'] == 'wait_test_choice':
         kbd = [[InlineKeyboardButton("📝 Пройти тест", callback_data='start_test')],
                [InlineKeyboardButton("⏭ Начать с нуля", callback_data='skip_test')]]
-        await update.message.reply_text(
-            f"{HEADER}\n🔴 **ВЫБОР ПУТИ**\n\nХочешь пройти тест для определения уровня или начнем с основ?\n{FOOTER}",
-            reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
+        await update.message.reply_text("🔴 **ВЫБОР ПУТИ**\n\nПроверим уровень знаний?", reply_markup=InlineKeyboardMarkup(kbd))
         return
 
-    welcome = f"{HEADER}\n🔴 **МАСТЕР {user['name'].upper()}** 🔴\n\nПродолжим обучение?\n{FOOTER}"
-    # Кнопка "Очистить память" удалена
-    kbd = [[InlineKeyboardButton("📊 Прогресс", callback_data='stats')], 
-           [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
-    await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
+    kbd = [[InlineKeyboardButton("📊 Прогресс", callback_data='stats')], [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
+    await update.message.reply_text(f"{HEADER}\n🔴 **МАСТЕР {user['name'].upper()}**\n\nПродолжим?\n{FOOTER}", reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    now = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
+    await db_mod("UPDATE users SET last_seen = ? WHERE id = ?", (now, uid))
+    
     user = await db_get("SELECT * FROM users WHERE id = ?", (uid,))
     if not user: return
 
     if user['state'] == 'wait_name':
         name = update.message.text[:20].strip()
         await db_mod("UPDATE users SET name = ?, state = 'wait_test_choice' WHERE id = ?", (name, uid))
-        await update.message.reply_text(f"Принято, {name}!")
         return await start_command(update, context)
 
     await context.bot.send_chat_action(chat_id=uid, action=constants.ChatAction.TYPING)
-    text = update.message.text # Для краткости опустим обработку голоса, она остается такой же
-
+    
     if user['state'] == 'wait_testing':
-        response = await ask_ai(text, uid, is_test=True)
-        if "RESULT_INDEX:" in response:
-            idx = re.findall(r'RESULT_INDEX: (\d+)', response)
-            new_idx = int(idx[0]) if idx else 0
-            await db_mod("UPDATE users SET topic_idx = ?, state = NULL, history = '[]' WHERE id = ?", (new_idx, uid))
-            await update.message.reply_text(f"{HEADER}\n✅ Тест окончен! Твой уровень определен. Нажми /start.\n{FOOTER}", parse_mode="Markdown")
+        res = await ask_ai(update.message.text, uid, is_test=True)
+        if "RESULT_INDEX:" in res:
+            idx = int(re.findall(r'RESULT_INDEX: (\d+)', res)[0])
+            await db_mod("UPDATE users SET topic_idx = ?, state = NULL, history = '[]' WHERE id = ?", (idx, uid))
+            await update.message.reply_text("✅ Уровень определен! Жми /start.")
         else:
-            await update.message.reply_text(f"{HEADER}\n📝 **ТЕСТ**\n\n{response}\n{FOOTER}", parse_mode="Markdown")
+            await update.message.reply_text(f"📝 **ТЕСТ**\n\n{res}")
         return
 
-    await update.message.reply_text(await ask_ai(text, uid), parse_mode="Markdown")
+    await update.message.reply_text(await ask_ai(update.message.text, uid), parse_mode="Markdown")
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query; uid = update.effective_user.id
+    q = update.callback_query; uid = update.effective_user.id
     user = await db_get("SELECT * FROM users WHERE id = ?", (uid,))
-    await query.answer()
+    await q.answer()
 
-    if query.data == 'start_test':
+    if q.data == 'start_test':
         await db_mod("UPDATE users SET state = 'wait_testing', history = '[]' WHERE id = ?", (uid,))
-        q = await ask_ai("Задай мне первый проверочный вопрос по Python.", uid, is_test=True)
-        await query.edit_message_text(f"{HEADER}\n📝 **ТЕСТ**\n\n{q}\n{FOOTER}", parse_mode="Markdown")
-    
-    elif query.data == 'skip_test':
+        txt = await ask_ai("Начни тест.", uid, is_test=True)
+        await q.edit_message_text(f"📝 **ТЕСТ**\n\n{txt}")
+    elif q.data == 'skip_test':
         await db_mod("UPDATE users SET topic_idx = 0, state = NULL WHERE id = ?", (uid,))
-        await query.edit_message_text(f"{HEADER}\n🚀 Ок, начинаем с нуля! Жми /start.\n{FOOTER}", parse_mode="Markdown")
-
-    elif query.data == 'stats':
-        text = f"{HEADER}\n👤 **Профиль: {user['name']}**\n🆙 **Этап:** {user['topic_idx']+1}/{len(TOPICS)}\n{FOOTER}"
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
-    
-    elif query.data == 'cur_topic':
-        topic = TOPICS[user['topic_idx'] % len(TOPICS)]
-        text = f"{HEADER}\n📜 **ТЕМА:** {topic['title']}\n\n{topic['description']}\n{FOOTER}"
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
-
-# --- Команды сброса и справки ---
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = f"{HEADER}\n📜 **КОМАНДЫ:**\n\n/start — Меню\n/clear — Очистить чат\n/reset — Полный сброс\n{FOOTER}"
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await db_mod("UPDATE users SET history = '[]' WHERE id = ?", (update.effective_user.id,))
-    await update.message.reply_text("🧹 Память диалога очищена.")
-
-async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await db_mod("DELETE FROM users WHERE id = ?", (update.effective_user.id,))
-    await update.message.reply_text("🚨 Прогресс удален. Нажми /start.")
-
-# ... (остальной код main и планировщика без изменений)
+        await q.edit_message_text("🚀 Начинаем с азов! Жми /start.")
+    elif q.data == 'stats':
+        await q.edit_message_text(f"👤 {user['name']}\n🆙 Тема: {user['topic_idx']+1}")
+    elif q.data == 'cur_topic':
+        t = TOPICS[user['topic_idx'] % len(TOPICS)]
+        await q.edit_message_text(f"📜 {t['title']}\n\n{t['description']}")
 
 async def main():
     await init_db()
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
-    
     app.add_handlers([
         CommandHandler("start", start_command),
-        CommandHandler("help", help_command),
-        CommandHandler("clear", clear_command),
-        CommandHandler("reset", reset_command),
+        CommandHandler("admin", admin_stats),
         CallbackQueryHandler(callback_handler),
-        MessageHandler(filters.TEXT | filters.VOICE, handle_input)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input)
     ])
-    
-    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    # Предполагается наличие функций morning_job и evening_job
-    scheduler.start()
-    
-    async with app:
-        await app.initialize(); await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        await asyncio.Event().wait()
+    await app.run_polling()
 
 if __name__ == "__main__":
     asyncio.run(main())
