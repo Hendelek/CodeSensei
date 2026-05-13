@@ -1,46 +1,53 @@
-☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
-An intelligent, asynchronous mentorship system for Telegram that leverages Large Language Models (LLMs) for adaptive learning.
+# ☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
 
-Status: Successfully passed internal testing phases. Currently utilized by students of a programming course to automate the learning cycle.
+**An intelligent, asynchronous mentorship system for Telegram that leverages Large Language Models (LLMs) for adaptive learning.**
 
-🔗 Production Bot: @Code_Sensei_bot
+> 🚀 **Current Status:** Successfully passed internal testing phases. Currently utilized by students of a programming course to automate the learning cycle.
 
-🛠 Technical Architecture & Deep Dive
-Asynchronous Core & Concurrency: Built on a non-blocking architecture using asyncio and python-telegram-bot (v20+). All network I/O, including Groq API calls and aiosqlite transactions, are handled within the event loop to ensure horizontal scalability and responsiveness under load.
+🔗 **Production Bot:** [@Code_Sensei_bot](https://t.me/Code_Sensei_bot)
 
-LLM Integration & Structured Parsing: Utilizes Llama-3.3-70B via the Groq SDK for high-speed inference.
+---
 
-Logic: Implements a custom parser using regular expressions to extract RESULT_INDEX from the LLM's natural language evaluation.
+### 🛠 Technical Architecture & Deep Dive
 
-Prompt Engineering: Dynamic system prompts are injected based on the user's state to minimize "hallucinations" and enforce a strict mentor persona.
+#### ⚡ Asynchronous Core & Concurrency
+Built on a non-blocking architecture using `asyncio` and `python-telegram-bot` (v20+). All network I/O, including **Groq API** calls and **aiosqlite** transactions, are handled within the event loop to ensure high responsiveness under load.
 
-Multimodal Data Processing: Integrated Whisper-large-v3 for STT (Speech-to-Text). The bot processes binary audio streams from Telegram, transcribes them via Groq, and feeds the resulting text into the Python analysis engine.
+#### 🧠 LLM Integration & Structured Parsing
+* **Core Engine:** Utilizes `Llama-3.3-70B` via the Groq SDK for high-speed inference.
+* **Logic:** Implements a custom parser using regular expressions to extract `RESULT_INDEX` from the LLM's natural language evaluation.
+* **Prompt Engineering:** Dynamic system prompts are injected based on the user's state to enforce a strict mentor persona and prevent "hallucinations".
 
-State Management & Data Persistence: * FSM: A persistent Finite State Machine (FSM) is implemented at the database level to track progress through registration, testing, and learning phases.
+#### 🎙 Multimodal Data Processing
+Integrated `Whisper-large-v3` for **Speech-to-Text (STT)**. The bot processes binary audio streams from Telegram, transcribes them via Groq, and feeds the resulting text into the Python analysis engine.
 
-Memory Management: Implements a sliding window context (last 6 turns) stored as JSON in SQLite. This balances token consumption with the need for long-term dialogue coherence.
+#### 💾 State Management & Persistence
+* **FSM (Finite State Machine):** A persistent state machine is implemented at the database level to track progress from registration to active learning.
+* **Memory Management:** Implements a **sliding window context** (last 6 turns) stored as JSON in SQLite to balance token efficiency with dialogue coherence.
 
-Automated Task Scheduling: Uses APScheduler with a CronTrigger to manage time-sensitive event delivery (theory at 10:00, practice at 19:00), synchronized with the Europe/Stockholm timezone.
+#### ⏰ Automated Task Scheduling
+Uses **APScheduler** with a `CronTrigger` to manage time-sensitive event delivery:
+* 🕙 **10:00** — Theoretical block delivery.
+* 🕖 **19:00** — Practical coding challenge assignment.
+* *Synchronized with `Europe/Stockholm` timezone.*
 
-🧩 System Logic & Pipeline
-Diagnostic Phase: The AI generates a sequence of 3-4 adaptive questions. The final response is analyzed for technical proficiency to determine the user's starting point in the TOPICS schema.
+---
 
-Learning Loop: A decoupled architecture where bot.py handles the engine logic and topics.py acts as the content provider. This allows for updating the curriculum without code redeployment.
+### 🧩 System Logic & Pipeline
 
-Strict Evaluation: The mentor employs "Chain-of-Thought" instructions to validate code snippets, ensuring that users don't just get the answer but understand the underlying Pythonic principles.
+1.  **Diagnostic Phase:** The AI generates a sequence of adaptive questions. Final response is analyzed for technical proficiency to determine the user's starting point in the `TOPICS` schema.
+2.  **Learning Loop:** A decoupled architecture where `bot.py` handles the engine logic and `topics.py` acts as the content provider, allowing curriculum updates without code redeployment.
+3.  **Evaluation:** The mentor employs "Chain-of-Thought" instructions to validate code snippets, ensuring users understand Pythonic principles.
 
-🚀 Development & Deployment
-Environment Configuration: Uses python-dotenv for secure management of TELEGRAM_TOKEN and GROQ_API_KEY.
+---
 
-Installation:
+### 📈 Future Engineering Goals
+* 🐳 **Dockerization:** Containerizing the stack for cloud-agnostic deployment.
+* 🛡 **Sandboxed Execution:** Implementing isolated environments to safely execute and verify student-submitted code.
+* 📚 **Vector DB Integration:** Moving to RAG (Retrieval-Augmented Generation) for complex documentation queries.
 
-Bash
-pip install -r requirements.txt
-python bot.py
-📈 Future Engineering Goals
-Dockerization: Containerizing the stack for cloud-agnostic deployment.
-
-Sandboxed Execution: Implementing RestrictedPython or Docker-based executors to safely run and verify student-submitted code.
+---
+**☁️ Engineered with a focus on pedagogical precision and system stability 🔴**
 
 Vector DB Integration: Moving from sliding windows to RAG (Retrieval-Augmented Generation) for more complex documentation queries.
 
