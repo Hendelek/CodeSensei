@@ -1,6 +1,4 @@
-Отличный заголовок и структура. Я объединил твой старый вариант с новыми данными о тестировании реальными студентами и техническими деталями текущего кода.
 
-Вот финальный, максимально "упакованный" README.md для твоего портфолио:
 
 ☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
 An intelligent, asynchronous mentorship system for Telegram that leverages Large Language Models (LLMs) for adaptive learning. This project has successfully passed internal testing phases and is currently utilized by students of a programming course to automate the learning cycle.
