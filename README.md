@@ -1,49 +1,47 @@
-# ☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
+☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
+An intelligent, asynchronous mentorship system for Telegram that leverages Large Language Models (LLMs) for adaptive learning.
 
-An intelligent, asynchronous mentorship system for Telegram that leverages Large Language Models (LLMs) for adaptive learning. 
+Status: Successfully passed internal testing phases. Currently utilized by students of a programming course to automate the learning cycle.
 
-> **Status:** Successfully passed internal testing phases. Currently utilized by students of a programming course to automate the learning cycle.
+🔗 Production Bot: @Code_Sensei_bot
 
-🔗 **Production Bot:** [@Code_Sensei_bot](https://t.me/Code_Sensei_bot)
+🛠 Technical Architecture & Deep Dive
+Asynchronous Core & Concurrency: Built on a non-blocking architecture using asyncio and python-telegram-bot (v20+). All network I/O, including Groq API calls and aiosqlite transactions, are handled within the event loop to ensure horizontal scalability and responsiveness under load.
 
----
+LLM Integration & Structured Parsing: Utilizes Llama-3.3-70B via the Groq SDK for high-speed inference.
 
-### 🛠 Technical Excellence
+Logic: Implements a custom parser using regular expressions to extract RESULT_INDEX from the LLM's natural language evaluation.
 
-* **Adaptive Level Assessment** Implemented a **"Zero-shot" technical interview** logic. The system uses `Llama-3.3-70B` to evaluate responses and automatically assign a starting module via structured output parsing (`RESULT_INDEX`).
+Prompt Engineering: Dynamic system prompts are injected based on the user's state to minimize "hallucinations" and enforce a strict mentor persona.
 
-* **Asynchronous Engine** Built with `python-telegram-bot` and `asyncio`. All I/O operations, including API requests to Groq and database queries, are **non-blocking** to ensure high performance.
+Multimodal Data Processing: Integrated Whisper-large-v3 for STT (Speech-to-Text). The bot processes binary audio streams from Telegram, transcribes them via Groq, and feeds the resulting text into the Python analysis engine.
 
-* **Persistent Storage & Context Management** Utilizes `aiosqlite` for thread-safe data persistence. It manages user states (FSM) and maintains a **6-turn sliding context window** to keep the AI focused and efficient.
+State Management & Data Persistence: * FSM: A persistent Finite State Machine (FSM) is implemented at the database level to track progress through registration, testing, and learning phases.
 
-* **Multimodal Interaction** Integrated `Whisper-large-v3` support for **voice message transcription**, allowing students to interact with the mentor using natural language.
+Memory Management: Implements a sliding window context (last 6 turns) stored as JSON in SQLite. This balances token consumption with the need for long-term dialogue coherence.
 
-* **Prompt Engineering** Engineered strict system instructions with custom branding (☁️/🔴) to prevent off-topic interactions and maintain a professional educational environment.
+Automated Task Scheduling: Uses APScheduler with a CronTrigger to manage time-sensitive event delivery (theory at 10:00, practice at 19:00), synchronized with the Europe/Stockholm timezone.
 
----
+🧩 System Logic & Pipeline
+Diagnostic Phase: The AI generates a sequence of 3-4 adaptive questions. The final response is analyzed for technical proficiency to determine the user's starting point in the TOPICS schema.
 
-### 🧩 Key Logic & Features
+Learning Loop: A decoupled architecture where bot.py handles the engine logic and topics.py acts as the content provider. This allows for updating the curriculum without code redeployment.
 
-1.  **AI-Driven FSM (State Machine):** Automated management of the user journey from registration to diagnostic testing and the active learning phase.
-2.  **Automated Learning Cycle:**
-    * 🕙 **Morning:** Theoretical block delivery based on the current topic.
-    * 🕖 **Evening:** Practical coding challenge assignment to reinforce skills.
-3.  **Modular Curriculum:** Educational content is decoupled into `topics.py`, allowing for seamless course scaling.
+Strict Evaluation: The mentor employs "Chain-of-Thought" instructions to validate code snippets, ensuring that users don't just get the answer but understand the underlying Pythonic principles.
 
----
+🚀 Development & Deployment
+Environment Configuration: Uses python-dotenv for secure management of TELEGRAM_TOKEN and GROQ_API_KEY.
 
-### 🚀 Getting Started
+Installation:
 
-1.  **Environment Setup** Create a `.env` file:
-    ```env
-    TELEGRAM_TOKEN=your_tg_token
-    GROQ_API_KEY=your_groq_key
-    ```
-2.  **Installation**
-    ```bash
-    pip install -r requirements.txt
-    python bot.py
-    ```
+Bash
+pip install -r requirements.txt
+python bot.py
+📈 Future Engineering Goals
+Dockerization: Containerizing the stack for cloud-agnostic deployment.
 
----
-**☁️ Developed with a focus on pedagogical integrity and scalable architecture 🔴**
+Sandboxed Execution: Implementing RestrictedPython or Docker-based executors to safely run and verify student-submitted code.
+
+Vector DB Integration: Moving from sliding windows to RAG (Retrieval-Augmented Generation) for more complex documentation queries.
+
+☁️ Engineered with a focus on pedagogical precision and system stability 🔴
