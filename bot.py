@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from telegram import Update, constants, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes, CallbackQueryHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from groq import AsyncGroq
+import google.generativeai as genai
 
 # Загрузка учебных тем
 try:
@@ -24,7 +24,11 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+# --- Настройка Gemini ---
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Используем модель 2.5 Flash
+gemini_model = genai.GenerativeModel('gemini-1.5-flash') 
+
 TIMEZONE = pytz.timezone("Europe/Stockholm")
 DB_PATH = "mentor_bot.db"
 
@@ -52,7 +56,7 @@ async def init_db():
         history TEXT DEFAULT '[]'
     )""")
 
-# --- AI Логика ---
+# --- AI Логика (Gemini) ---
 async def ask_ai(prompt, user_id, is_test=False):
     user = await db_get("SELECT history, name FROM users WHERE id = ?", (user_id,))
     try:
@@ -74,18 +78,30 @@ async def ask_ai(prompt, user_id, is_test=False):
             "Игнорируй оффтоп. Стиль: лаконичный, с ☁️ и 🔴."
         )
     
-    messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
+    # Формируем историю для Gemini
+    contents = []
+    for msg in history:
+        role = "model" if msg["role"] == "assistant" else "user"
+        contents.append({"role": role, "parts": [msg["content"]]})
+    
+    # Добавляем инструкцию и текущий запрос
+    full_prompt = f"SYSTEM_INSTRUCTION: {system_instruction}\n\nUSER_MESSAGE: {prompt}"
+    contents.append({"role": "user", "parts": [full_prompt]})
     
     try:
-        resp = await client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, temperature=0.3)
-        answer = resp.choices[0].message.content
+        # Асинхронная генерация контента
+        response = await gemini_model.generate_content_async(contents)
+        answer = response.text
+        
+        # Обновляем историю (Gemini тянет больше контекста, увеличиваем до 15)
         history.append({"role": "user", "content": prompt})
         history.append({"role": "assistant", "content": answer})
-        await db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
+        await db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-15:]), user_id))
+        
         return answer if is_test else f"{HEADER}\n\n{answer}\n\n{FOOTER}"
     except Exception as e:
-        logger.error(f"AI Error: {e}")
-        return "🌀 Ошибка связи."
+        logger.error(f"Gemini AI Error: {e}")
+        return "🌀 Ошибка связи с нейросетью."
 
 # --- Обработчики команд ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -109,7 +125,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     welcome = f"{HEADER}\n🔴 **МАСТЕР {user['name'].upper()}** 🔴\n\nПродолжим обучение?\n{FOOTER}"
-    # Кнопка "Очистить память" удалена
     kbd = [[InlineKeyboardButton("📊 Прогресс", callback_data='stats')], 
            [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
     await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
@@ -126,7 +141,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await start_command(update, context)
 
     await context.bot.send_chat_action(chat_id=uid, action=constants.ChatAction.TYPING)
-    text = update.message.text # Для краткости опустим обработку голоса, она остается такой же
+    text = update.message.text 
 
     if user['state'] == 'wait_testing':
         response = await ask_ai(text, uid, is_test=True)
@@ -134,7 +149,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             idx = re.findall(r'RESULT_INDEX: (\d+)', response)
             new_idx = int(idx[0]) if idx else 0
             await db_mod("UPDATE users SET topic_idx = ?, state = NULL, history = '[]' WHERE id = ?", (new_idx, uid))
-            await update.message.reply_text(f"{HEADER}\n✅ Тест окончен! Твой уровень определен. Нажми /start.\n{FOOTER}", parse_mode="Markdown")
+            await update.message.reply_text(f"{HEADER}\n✅ Тест окончен! Уровень {new_idx}. Жми /start.\n{FOOTER}", parse_mode="Markdown")
         else:
             await update.message.reply_text(f"{HEADER}\n📝 **ТЕСТ**\n\n{response}\n{FOOTER}", parse_mode="Markdown")
         return
@@ -164,7 +179,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"{HEADER}\n📜 **ТЕМА:** {topic['title']}\n\n{topic['description']}\n{FOOTER}"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
-# --- Команды сброса и справки ---
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"{HEADER}\n📜 **КОМАНДЫ:**\n\n/start — Меню\n/clear — Очистить чат\n/reset — Полный сброс\n{FOOTER}"
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -176,8 +190,6 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await db_mod("DELETE FROM users WHERE id = ?", (update.effective_user.id,))
     await update.message.reply_text("🚨 Прогресс удален. Нажми /start.")
-
-# ... (остальной код main и планировщика без изменений)
 
 async def main():
     await init_db()
@@ -191,15 +203,3 @@ async def main():
         CallbackQueryHandler(callback_handler),
         MessageHandler(filters.TEXT | filters.VOICE, handle_input)
     ])
-    
-    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-    # Предполагается наличие функций morning_job и evening_job
-    scheduler.start()
-    
-    async with app:
-        await app.initialize(); await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        await asyncio.Event().wait()
-
-if __name__ == "__main__":
-    asyncio.run(main())
