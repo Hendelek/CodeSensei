@@ -12,22 +12,21 @@ from dotenv import load_dotenv
 from telegram import Update, constants, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes, CallbackQueryHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-# Новый SDK от Google
+# Исправленный импорт
 from google import genai 
 
 # Загрузка учебных тем
 try:
     from topics import TOPICS
 except ImportError:
-    TOPICS = [{"title": "Основы", "description": "База Python."}]
+    TOPICS = [{"title": "Основы", "description": "База Python.", "morning_question": "Зачем нужен print()?", "evening_task": "Выведи приветствие."}]
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация клиента (замени GROQ на этот вариант)
+# Инициализация клиента Gemini
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
 TIMEZONE = pytz.timezone("Europe/Stockholm")
 DB_PATH = "mentor_bot.db"
 
@@ -55,7 +54,7 @@ async def init_db():
         history TEXT DEFAULT '[]'
     )""")
 
-# --- AI Логика (Gemini 2.0 Flash) ---
+# --- AI Логика (Gemini) ---
 async def ask_ai(prompt, user_id, is_test=False):
     user = await db_get("SELECT history, name FROM users WHERE id = ?", (user_id,))
     try:
@@ -66,41 +65,42 @@ async def ask_ai(prompt, user_id, is_test=False):
     name = user['name'] if user and user['name'] else "Студент"
     
     if is_test:
-        sys_instr = (
-            f"Ты проводишь вступительный тест для студента {name}. Задавай по одному вопросу. "
-            f"В конце пришли: 'RESULT_INDEX: n', где n (0-{len(TOPICS)-1})."
+        system_instruction = (
+            f"Ты проводишь вступительный тест для студента {name}. Задавай по одному техническому вопросу по Python. "
+            "После 3-4 ответов ты должен оценить уровень и прислать строгое сообщение: 'RESULT_INDEX: n', "
+            f"где n — число от 0 до {len(TOPICS)-1}. Выбирай индекс темы на основе знаний."
         )
     else:
-        sys_instr = f"Ты — строгий Python-ментор. Студент: {name}. Стиль: лаконичный, с ☁️ и 🔴."
-
-    # Форматирование истории для нового SDK
+        system_instruction = (
+            f"Ты — строгий Python-ментор. Студент: {name}. Цель — обучение Python. "
+            "Игнорируй оффтоп. Стиль: лаконичный, с ☁️ и 🔴."
+        )
+    
+    # Форматирование под новый SDK
     contents = []
-    for msg in history:
+    # Добавляем историю (последние 6 сообщений для экономии лимитов 429)
+    for msg in history[-6:]:
         contents.append({
             "role": "model" if msg["role"] == "assistant" else "user",
             "parts": [{"text": msg["content"]}]
         })
     
-    # Добавляем текущую инструкцию и запрос
-    contents.append({"role": "user", "parts": [{"text": f"{sys_instr}\n\n{prompt}"}]})
+    # Добавляем системную инструкцию и текущий промпт
+    contents.append({"role": "user", "parts": [{"text": f"{system_instruction}\n\n{prompt}"}]})
 
     try:
-        # Вызов Gemini 2.0 Flash
-        response = client.models.generate_content(
-            model='gemini-2.0-flash', 
-            contents=contents
-        )
-        answer = response.text
+        resp = client.models.generate_content(model="gemini-2.0-flash", contents=contents)
+        answer = resp.text
         
-        # Обновляем историю (храним последние 10 сообщений)
         history.append({"role": "user", "content": prompt})
         history.append({"role": "assistant", "content": answer})
-        await db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-10:]), user_id))
-        
+        await db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-8:]), user_id))
         return answer if is_test else f"{HEADER}\n\n{answer}\n\n{FOOTER}"
     except Exception as e:
-        logger.error(f"Gemini AI Error: {e}")
-        return "🌀 Ошибка связи с нейросетью."
+        logger.error(f"AI Error: {e}")
+        if "429" in str(e):
+            return "🌀 Ошибка: Лимиты запросов. Подожди минуту."
+        return "🌀 Ошибка связи."
 
 # --- Обработчики команд ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -148,7 +148,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             idx = re.findall(r'RESULT_INDEX: (\d+)', response)
             new_idx = int(idx[0]) if idx else 0
             await db_mod("UPDATE users SET topic_idx = ?, state = NULL, history = '[]' WHERE id = ?", (new_idx, uid))
-            await update.message.reply_text(f"{HEADER}\n✅ Тест окончен! Уровень {new_idx}. Нажми /start.\n{FOOTER}", parse_mode="Markdown")
+            await update.message.reply_text(f"{HEADER}\n✅ Тест окончен! Нажми /start.\n{FOOTER}", parse_mode="Markdown")
         else:
             await update.message.reply_text(f"{HEADER}\n📝 **ТЕСТ**\n\n{response}\n{FOOTER}", parse_mode="Markdown")
         return
@@ -162,12 +162,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == 'start_test':
         await db_mod("UPDATE users SET state = 'wait_testing', history = '[]' WHERE id = ?", (uid,))
-        q = await ask_ai("Задай мне первый вопрос.", uid, is_test=True)
+        q = await ask_ai("Задай мне первый проверочный вопрос по Python.", uid, is_test=True)
         await query.edit_message_text(f"{HEADER}\n📝 **ТЕСТ**\n\n{q}\n{FOOTER}", parse_mode="Markdown")
     
     elif query.data == 'skip_test':
         await db_mod("UPDATE users SET topic_idx = 0, state = NULL WHERE id = ?", (uid,))
-        await query.edit_message_text(f"{HEADER}\n🚀 Начинаем! Жми /start.\n{FOOTER}", parse_mode="Markdown")
+        await query.edit_message_text(f"{HEADER}\n🚀 Ок, начинаем с нуля! Жми /start.\n{FOOTER}", parse_mode="Markdown")
 
     elif query.data == 'stats':
         text = f"{HEADER}\n👤 **Профиль: {user['name']}**\n🆙 **Этап:** {user['topic_idx']+1}/{len(TOPICS)}\n{FOOTER}"
@@ -178,9 +178,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"{HEADER}\n📜 **ТЕМА:** {topic['title']}\n\n{topic['description']}\n{FOOTER}"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = f"{HEADER}\n📜 **КОМАНДЫ:**\n\n/start — Меню\n/clear — Очистить чат\n/reset — Полный сброс\n{FOOTER}"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await db_mod("UPDATE users SET history = '[]' WHERE id = ?", (update.effective_user.id,))
-    await update.message.reply_text("🧹 Память очищена.")
+    await update.message.reply_text("🧹 Память диалога очищена.")
+
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await db_mod("DELETE FROM users WHERE id = ?", (update.effective_user.id,))
+    await update.message.reply_text("🚨 Прогресс удален. Нажми /start.")
 
 async def main():
     await init_db()
@@ -188,10 +196,15 @@ async def main():
     
     app.add_handlers([
         CommandHandler("start", start_command),
+        CommandHandler("help", help_command),
         CommandHandler("clear", clear_command),
+        CommandHandler("reset", reset_command),
         CallbackQueryHandler(callback_handler),
         MessageHandler(filters.TEXT, handle_input)
     ])
+    
+    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+    scheduler.start()
     
     async with app:
         await app.initialize(); await app.start()
