@@ -1,54 +1,53 @@
 # ☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
 
-**An intelligent, asynchronous mentorship system for Telegram that leverages Large Language Models (LLMs) for adaptive learning.**
+**An intelligent, asynchronous mentorship system for Telegram that leverages LLMs for adaptive learning.**
 
-> 🚀 **Current Status:** Successfully passed internal testing phases. Currently utilized by students of a programming course to automate the learning cycle.
-
-🔗 **Production Bot:** [@Code_Sensei_bot](https://t.me/Code_Sensei_bot)
+🔗 **Live Production Bot:** [@Code_Sensei_bot](https://t.me/Code_Sensei_bot)
 
 ---
 
-### 🛠 Technical Architecture & Deep Dive
-
-#### ⚡ Asynchronous Core & Concurrency
-Built on a non-blocking architecture using `asyncio` and `python-telegram-bot` (v20+). All network I/O, including **Groq API** calls and **aiosqlite** transactions, are handled within the event loop to ensure high responsiveness under load.
-
-#### 🧠 LLM Integration & Structured Parsing
-* **Core Engine:** Utilizes `Llama-3.3-70B` via the Groq SDK for high-speed inference.
-* **Logic:** Implements a custom parser using regular expressions to extract `RESULT_INDEX` from the LLM's natural language evaluation.
-* **Prompt Engineering:** Dynamic system prompts are injected based on the user's state to enforce a strict mentor persona and prevent "hallucinations".
-
-#### 🎙 Multimodal Data Processing
-Integrated `Whisper-large-v3` for **Speech-to-Text (STT)**. The bot processes binary audio streams from Telegram, transcribes them via Groq, and feeds the resulting text into the Python analysis engine.
-
-#### 💾 State Management & Persistence
-* **FSM (Finite State Machine):** A persistent state machine is implemented at the database level to track progress from registration to active learning.
-* **Memory Management:** Implements a **sliding window context** (last 6 turns) stored as JSON in SQLite to balance token efficiency with dialogue coherence.
-
-#### ⏰ Automated Task Scheduling
-Uses **APScheduler** with a `CronTrigger` to manage time-sensitive event delivery:
-* 🕙 **10:00** — Theoretical block delivery.
-* 🕖 **19:00** — Practical coding challenge assignment.
-* *Synchronized with `Europe/Stockholm` timezone.*
+### 🚀 Deployment & Real-World Impact
+* **Status:** Successfully passed comprehensive beta testing phases.
+* **Active Usage:** Currently integrated and utilized by students of a professional programming course to automate their daily learning cycle.
+* **Proven Stability:** The system is battle-tested with real users, ensuring high reliability in production environments.
 
 ---
 
-### 🧩 System Logic & Pipeline
+### 🧩 Key Features & Functionality
 
-1.  **Diagnostic Phase:** The AI generates a sequence of adaptive questions. Final response is analyzed for technical proficiency to determine the user's starting point in the `TOPICS` schema.
-2.  **Learning Loop:** A decoupled architecture where `bot.py` handles the engine logic and `topics.py` acts as the content provider, allowing curriculum updates without code redeployment.
-3.  **Evaluation:** The mentor employs "Chain-of-Thought" instructions to validate code snippets, ensuring users understand Pythonic principles.
+* **Adaptive Diagnostic Testing** The AI mentor conducts a technical interview (3-4 questions). Based on performance, it extracts a `RESULT_INDEX` via regex to automatically assign the correct starting topic.
+
+* **Multimodal Input Processing** Full support for text and voice messages. Voice audio is processed through `Whisper-large-v3` for transcription before technical analysis.
+
+* **Smart Context Management** Maintains a sliding context window of the last 6 dialogue turns stored as JSON in SQLite. This preserves continuity without exceeding AI token limits.
+
+* **Automated Learning Lifecycle** Managed by `APScheduler`. Automatically delivers theory in the morning and practical tasks in the evening.
+
+* **Strict Mentor Persona** Engineered system prompts ensure a concise, professional personality (☁️/🔴) that ignores off-topic chatter.
 
 ---
 
-### 📈 Future Engineering Goals
-* 🐳 **Dockerization:** Containerizing the stack for cloud-agnostic deployment.
-* 🛡 **Sandboxed Execution:** Implementing isolated environments to safely execute and verify student-submitted code.
-* 📚 **Vector DB Integration:** Moving to RAG (Retrieval-Augmented Generation) for complex documentation queries.
+### ⚙️ How It Works (Technical Overview)
+
+#### 1. Input Orchestration (`handle_input`)
+The system routes data based on the user's **FSM state**:
+* **Registration (`wait_name`)**: Captures name for personalized interaction.
+* **Diagnostic (`wait_testing`)**: Monitors for the `RESULT_INDEX` to finalize level placement.
+* **Learning Mode**: Standard tutor mode utilizing session history.
+
+#### 2. Asynchronous Persistence Layer
+Built with `aiosqlite` for non-blocking database operations, crucial for handling concurrent student sessions.
+* **Users Table**: Tracks IDs, names, topic progress (`topic_idx`), and FSM states.
+
+#### 3. Decoupled Curriculum (`topics.py`)
+Learning content is separated from the engine logic. Each module includes:
+* **Theory**: Conceptual questions (`morning_question`).
+* **Practice**: Coding challenges (`evening_task`).
 
 ---
-**☁️ Engineered with a focus on pedagogical precision and system stability 🔴**
 
-Vector DB Integration: Moving from sliding windows to RAG (Retrieval-Augmented Generation) for more complex documentation queries.
-
-☁️ Engineered with a focus on pedagogical precision and system stability 🔴
+### 🛠 Technical Stack
+* **Core**: Python 3.10+, `python-telegram-bot` (v20+).
+* **AI/LLM**: Groq SDK (`Llama-3.3-70b`, `Whisper-large-v3`).
+* **Scheduling**: `APScheduler` synchronized with `Europe/Stockholm` timezone.
+* **Database**: `aiosqlite` with JSON history serialization.
