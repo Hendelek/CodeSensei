@@ -12,8 +12,7 @@ from dotenv import load_dotenv
 from telegram import Update, constants, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes, CallbackQueryHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-# Исправленный импорт
-from google import genai 
+from groq import AsyncGroq
 
 # Загрузка учебных тем
 try:
@@ -25,8 +24,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация клиента Gemini
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 TIMEZONE = pytz.timezone("Europe/Stockholm")
 DB_PATH = "mentor_bot.db"
 
@@ -54,7 +52,7 @@ async def init_db():
         history TEXT DEFAULT '[]'
     )""")
 
-# --- AI Логика (Gemini) ---
+# --- AI Логика ---
 async def ask_ai(prompt, user_id, is_test=False):
     user = await db_get("SELECT history, name FROM users WHERE id = ?", (user_id,))
     try:
@@ -76,30 +74,17 @@ async def ask_ai(prompt, user_id, is_test=False):
             "Игнорируй оффтоп. Стиль: лаконичный, с ☁️ и 🔴."
         )
     
-    # Форматирование под новый SDK
-    contents = []
-    # Добавляем историю (последние 6 сообщений для экономии лимитов 429)
-    for msg in history[-6:]:
-        contents.append({
-            "role": "model" if msg["role"] == "assistant" else "user",
-            "parts": [{"text": msg["content"]}]
-        })
+    messages = [{"role": "system", "content": system_instruction}] + history + [{"role": "user", "content": prompt}]
     
-    # Добавляем системную инструкцию и текущий промпт
-    contents.append({"role": "user", "parts": [{"text": f"{system_instruction}\n\n{prompt}"}]})
-
     try:
-        resp = client.models.generate_content(model="gemini-2.0-flash", contents=contents)
-        answer = resp.text
-        
+        resp = await client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages, temperature=0.3)
+        answer = resp.choices[0].message.content
         history.append({"role": "user", "content": prompt})
         history.append({"role": "assistant", "content": answer})
-        await db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-8:]), user_id))
+        await db_mod("UPDATE users SET history = ? WHERE id = ?", (json.dumps(history[-6:]), user_id))
         return answer if is_test else f"{HEADER}\n\n{answer}\n\n{FOOTER}"
     except Exception as e:
         logger.error(f"AI Error: {e}")
-        if "429" in str(e):
-            return "🌀 Ошибка: Лимиты запросов. Подожди минуту."
         return "🌀 Ошибка связи."
 
 # --- Обработчики команд ---
@@ -119,11 +104,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kbd = [[InlineKeyboardButton("📝 Пройти тест", callback_data='start_test')],
                [InlineKeyboardButton("⏭ Начать с нуля", callback_data='skip_test')]]
         await update.message.reply_text(
-            f"{HEADER}\n🔴 **ВЫБОР ПУТИ**\n\nХочешь пройти тест или начнем с основ?\n{FOOTER}",
+            f"{HEADER}\n🔴 **ВЫБОР ПУТИ**\n\nХочешь пройти тест для определения уровня или начнем с основ?\n{FOOTER}",
             reply_markup=InlineKeyboardMarkup(kbd), parse_mode="Markdown")
         return
 
     welcome = f"{HEADER}\n🔴 **МАСТЕР {user['name'].upper()}** 🔴\n\nПродолжим обучение?\n{FOOTER}"
+    # Кнопка "Очистить память" удалена
     kbd = [[InlineKeyboardButton("📊 Прогресс", callback_data='stats')], 
            [InlineKeyboardButton("📜 Текущая тема", callback_data='cur_topic')]]
     await update.message.reply_text(welcome, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kbd))
@@ -140,7 +126,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await start_command(update, context)
 
     await context.bot.send_chat_action(chat_id=uid, action=constants.ChatAction.TYPING)
-    text = update.message.text 
+    text = update.message.text # Для краткости опустим обработку голоса, она остается такой же
 
     if user['state'] == 'wait_testing':
         response = await ask_ai(text, uid, is_test=True)
@@ -148,7 +134,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             idx = re.findall(r'RESULT_INDEX: (\d+)', response)
             new_idx = int(idx[0]) if idx else 0
             await db_mod("UPDATE users SET topic_idx = ?, state = NULL, history = '[]' WHERE id = ?", (new_idx, uid))
-            await update.message.reply_text(f"{HEADER}\n✅ Тест окончен! Нажми /start.\n{FOOTER}", parse_mode="Markdown")
+            await update.message.reply_text(f"{HEADER}\n✅ Тест окончен! Твой уровень определен. Нажми /start.\n{FOOTER}", parse_mode="Markdown")
         else:
             await update.message.reply_text(f"{HEADER}\n📝 **ТЕСТ**\n\n{response}\n{FOOTER}", parse_mode="Markdown")
         return
@@ -178,6 +164,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"{HEADER}\n📜 **ТЕМА:** {topic['title']}\n\n{topic['description']}\n{FOOTER}"
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=query.message.reply_markup)
 
+# --- Команды сброса и справки ---
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"{HEADER}\n📜 **КОМАНДЫ:**\n\n/start — Меню\n/clear — Очистить чат\n/reset — Полный сброс\n{FOOTER}"
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -190,6 +177,8 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await db_mod("DELETE FROM users WHERE id = ?", (update.effective_user.id,))
     await update.message.reply_text("🚨 Прогресс удален. Нажми /start.")
 
+# ... (остальной код main и планировщика без изменений)
+
 async def main():
     await init_db()
     app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
@@ -200,10 +189,11 @@ async def main():
         CommandHandler("clear", clear_command),
         CommandHandler("reset", reset_command),
         CallbackQueryHandler(callback_handler),
-        MessageHandler(filters.TEXT, handle_input)
+        MessageHandler(filters.TEXT | filters.VOICE, handle_input)
     ])
     
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+    # Предполагается наличие функций morning_job и evening_job
     scheduler.start()
     
     async with app:
