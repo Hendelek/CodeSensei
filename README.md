@@ -1,6 +1,6 @@
 # ☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
 
-**An intelligent, asynchronous mentorship system for Telegram that leverages LLMs for adaptive learning.**
+** An intelligent, asynchronous mentorship system for Telegram that leverages LLMs for adaptive learning.**
 
 🔗 **Live Production Bot:** [@Code_Sensei_bot](https://t.me/Code_Sensei_bot)
 
