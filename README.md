@@ -1,53 +1,62 @@
-# ☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
+☁️ CodeSensei: Advanced AI-Driven Python Mentor 🔴
+An intelligent, asynchronous mentorship system for Telegram that leverages LLMs for adaptive learning.
 
-** An intelligent, asynchronous mentorship system for Telegram that leverages LLMs for adaptive learning.**
+🔗 Live Production Bot: @Code_Sensei_bot
 
-🔗 **Live Production Bot:** [@Code_Sensei_bot](https://t.me/Code_Sensei_bot)
+🚀 Deployment & Real-World Impact
+Status: Successfully passed comprehensive beta testing phases.
 
----
+Active Usage: Currently integrated and utilized by students of a professional programming course to automate their daily learning cycle.
 
-### 🚀 Deployment & Real-World Impact
-* **Status:** Successfully passed comprehensive beta testing phases.
-* **Active Usage:** Currently integrated and utilized by students of a professional programming course to automate their daily learning cycle.
-* **Proven Stability:** The system is battle-tested with real users, ensuring high reliability in production environments.
+Production-Ready Stability: Fully refactored to a modern, decoupled architecture capable of handling high concurrent loads with bulletproof stability.
 
----
+🧩 Key Features & Functionality
+Adaptive Diagnostic Testing: The AI mentor conducts a technical interview (4 structured questions). Upon completion, the system extracts evaluation metrics and a starting topic index using secure JSON parsing.
 
-### 🧩 Key Features & Functionality
+Smart Context Management: Maintains an optimized sliding context window of the last 6 dialogue turns stored as JSON in SQLite. This preserves continuity without exceeding AI token limits.
 
-* **Adaptive Diagnostic Testing** The AI mentor conducts a technical interview (3-4 questions). Based on performance, it extracts a `RESULT_INDEX` via regex to automatically assign the correct starting topic.
+Automated Learning Lifecycle: Managed by APScheduler. Automatically delivers theory in the morning (morning_question) and practical tasks in the evening (evening_task) synchronized with the Europe/Stockholm timezone.
 
-* **Multimodal Input Processing** Full support for text and voice messages. Voice audio is processed through `Whisper-large-v3` for transcription before technical analysis.
+Strict Mentor Persona: Robust system prompts ensure a concise, professional personality (☁️/🔴) that ignores off-topic chatter and keeps the student focused.
 
-* **Smart Context Management** Maintains a sliding context window of the last 6 dialogue turns stored as JSON in SQLite. This preserves continuity without exceeding AI token limits.
+⚙️ How It Works (Technical Overview)
+1. Robust Routing & State Machine
+Built on aiogram's native Finite State Machine (FSM) and independent Routers. The codebase is completely decoupled:
 
-* **Automated Learning Lifecycle** Managed by `APScheduler`. Automatically delivers theory in the morning and practical tasks in the evening.
+Registration (wait_name): Captures and validates user names.
 
-* **Strict Mentor Persona** Engineered system prompts ensure a concise, professional personality (☁️/🔴) that ignores off-topic chatter.
+Diagnostic (wait_testing): Orchestrates the entry exam and safely parses AI outputs.
 
----
+Learning Mode: Standard asynchronous interaction with the mentor persona.
 
-### ⚙️ How It Works (Technical Overview)
+2. High-Performance Persistence Layer
+Utilizes aiosqlite for non-blocking database operations. The database configuration is highly optimized for concurrent multi-user environments using advanced SQLite configurations:
 
-#### 1. Input Orchestration (`handle_input`)
-The system routes data based on the user's **FSM state**:
-* **Registration (`wait_name`)**: Captures name for personalized interaction.
-* **Diagnostic (`wait_testing`)**: Monitors for the `RESULT_INDEX` to finalize level placement.
-* **Learning Mode**: Standard tutor mode utilizing session history.
+WAL Mode (Write-Ahead Logging) enabled for safe, concurrent read/write operations.
 
-#### 2. Asynchronous Persistence Layer
-Built with `aiosqlite` for non-blocking database operations, crucial for handling concurrent student sessions.
-* **Users Table**: Tracks IDs, names, topic progress (`topic_idx`), and FSM states.
+In-Memory Temporary Storage and tuned cache size for lightning-fast query execution.
 
-#### 3. Decoupled Curriculum (`topics.py`)
-Learning content is separated from the engine logic. Each module includes:
-* **Theory**: Conceptual questions (`morning_question`).
-* **Practice**: Coding challenges (`evening_task`).
+3. Decoupled Curriculum
+Learning content is completely isolated from the engine logic inside topics.py. Each module includes structured conceptual theory and practical coding challenges.
 
----
+🛠 Technical Stack
+Framework: Python 3.10+, aiogram 3.x (Router & FSM-driven architecture).
 
-### 🛠 Technical Stack
-* **Core**: Python 3.10+, `python-telegram-bot` (v20+).
-* **AI/LLM**: Groq SDK (`Llama-3.3-70b`, `Whisper-large-v3`).
-* **Scheduling**: `APScheduler` synchronized with `Europe/Stockholm` timezone.
-* **Database**: `aiosqlite` with JSON history serialization.
+Configuration & Validation: Pydantic Settings v2 (strict environment variable validation at runtime).
+
+AI/LLM Integration: Groq SDK (llama-3.3-70b-versatile).
+
+Scheduling: APScheduler.
+
+Database: aiosqlite with customized performance PRAGMAs.
+
+📁 Project Structure
+Plaintext
+├── .env                  # Environment variables
+├── config.py             # Pydantic environment validation settings
+├── database.py           # Database connection, initialization, and PRAGMA tweaks
+├── ai_service.py         # Groq API integration and prompt engineering
+├── handlers.py           # Main Telegram routers, commands, and FSM logic
+├── topics.py             # Decoupled educational curriculum
+├── bot.py                # Application entrypoint & scheduler execution
+└── requirements.txt      # Project dependencies
