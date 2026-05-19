@@ -1,8 +1,8 @@
-python-telegram-bot
+aiogram>=3.0.0
 groq
 apscheduler
 pytz
-python-dotenv
-PyPDF2
-pydub
+pydantic-settings
+pydantic
 aiosqlite
+python-dotenv
