@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 client = AsyncGroq(api_key=config.groq_api_key.get_secret_value())
 
 HEADER = "☁️🔴━━━━━━━━━━━━🔴☁️"
+
 FOOTER = "━━━━━━━━━━━━━━━"
 
 async def ask_ai(prompt: str, user_id: int, is_test: bool = False) -> str:
@@ -18,7 +19,6 @@ async def ask_ai(prompt: str, user_id: int, is_test: bool = False) -> str:
     history = await db.get_user_history(user_id)
     
     if is_test:
-        # Считаем текущий шаг по количеству реплик юзера в истории теста
         user_messages = [m for m in history if m["role"] == "user"]
         step = len(user_messages) + 1
         
@@ -33,6 +33,7 @@ async def ask_ai(prompt: str, user_id: int, is_test: bool = False) -> str:
     else:
         system_instruction = (
             f"Ты — строгий Python-ментор. Студент: {name}. Цель — обучение Python. "
+            
             "Игнорируй темы, не связанные с программированием. Отвечай лаконично, структурировано."
         )
         
