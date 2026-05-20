@@ -44,6 +44,6 @@ async def get_user_history(user_id: int) -> list:
         return []
 
 async def save_user_history(user_id: int, history: list):
-    # Храним только последние 6 сообщений контекста
-    truncated = history[-6:]
+    # Храним  последние 8 сообщений контекста
+    truncated = history[-8:]
     await execute_query("UPDATE users SET history = ? WHERE id = ?", (json.dumps(truncated), user_id))
