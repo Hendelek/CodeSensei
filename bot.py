@@ -14,15 +14,15 @@ logger = logging.getLogger(__name__)
 TIMEZONE = pytz.timezone("Europe/Stockholm")
 
 async def main():
-    # Инициализация асинхронной БД с PRAGMA
+
     await db.init_db()
     
-    # Инициализация бота на aiogram 3
+
     bot = Bot(token=config.telegram_token.get_secret_value())
     dp = Dispatcher()
     dp.include_router(router)
     
-    # Инициализация шедулера (если нужен для джоб)
+
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     # scheduler.add_job(...)
     scheduler.start()
