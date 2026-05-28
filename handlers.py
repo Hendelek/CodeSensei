@@ -84,8 +84,10 @@ async def skip_test(callback: types.CallbackQuery, state: FSMContext):
 async def handle_testing(message: types.Message, state: FSMContext):
     uid = message.from_user.id
     response = await ai.ask_ai(message.text, uid, is_test=True)
+
+
+
     
-    # Ищем JSON-структуру в ответе модели на финальном шаге
     json_match = re.search(r'\{.*\}', response, re.DOTALL)
     
     if json_match:
@@ -104,7 +106,7 @@ async def handle_testing(message: types.Message, state: FSMContext):
             )
             return
         except Exception:
-            pass # Если модель выдала кривой JSON, обрабатываем как обычный текст
+            pass # Если модель выдала хуйню
             
     await message.reply(f"{ai.HEADER}\n📝 **ТЕСТ**\n\n{response}\n{ai.FOOTER}", parse_mode="Markdown")
 
@@ -137,7 +139,7 @@ async def reset_command(message: types.Message, state: FSMContext):
 @router.message(F.text)
 async def handle_mentor_talk(message: types.Message):
     uid = message.from_user.id
-    # Проверяем, зарегистрирован ли пользователь вообще
+    # Проверочка 
     user = await db.fetch_one("SELECT name FROM users WHERE id = ?", (uid,))
     if not user or not user['name']:
         await message.reply("Пожалуйста, сначала отправь /start для регистрации.")
